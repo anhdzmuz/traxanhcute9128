@@ -167,4 +167,4 @@ keep_alive()
 
 # ⚠️ LƯU Ý LỚN: Trên Render, KHÔNG NÊN dán token trực tiếp vào đây để bảo mật. 
 # Ta sẽ dùng biến môi trường (Environment Variable) tên là DISCORD_TOKEN.
-bot.run(os.environ.get("DISCORD_TOKEN"))
+bot.run(os.environ.get("MTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OIMTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OIMTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OIMTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OI"))
