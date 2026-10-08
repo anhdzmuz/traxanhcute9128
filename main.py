@@ -49,6 +49,6 @@ keep_alive()
 
 BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
 if not BOT_TOKEN:
-    BOT_TOKEN = "MTU1NzU4ODEwMzUyOTQ5NjU5Ng.Gyu0gR.HXFFUSM5wV3FoYrMPV2xoTr-Y5FRuaxviKv9LY"
+    BOT_TOKEN = "abc"
 
 bot.run(BOT_TOKEN)
