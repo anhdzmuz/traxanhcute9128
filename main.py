@@ -3,7 +3,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import json
 import os
-import random  # Thêm thư viện để random người thách đấu
+import random
 from datetime import datetime, timedelta
 from flask import Flask
 from threading import Thread
@@ -43,7 +43,7 @@ default_data = {
     },
     "wallets": {},
     "cooldowns": {},
-    "active_registrations": {}  # Nơi lưu trữ các đơn đăng ký thách đấu đang mở
+    "active_registrations": {}
 }
 
 def load_data():
@@ -52,7 +52,13 @@ def load_data():
             json.dump(default_data, f, indent=4)
         return default_data
     with open(DATA_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+        try:
+            content = json.load(f)
+            if "active_registrations" not in content:
+                content["active_registrations"] = {}
+            return content
+        except Exception:
+            return default_data
 
 def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -63,7 +69,6 @@ def is_gym_channel():
         return interaction.channel_id == GYM_CHANNEL_ID
     return app_commands.check(predicate)
 
-# Hàm helper lấy thông tin luật teambuilding dạng chuỗi text để đính kèm
 def get_teambuilding_text():
     return (
         "⚠️ **LƯU Ý QUY ĐỊNH TEAMBUILDING:**\n"
@@ -86,49 +91,47 @@ async def reward_stardust_loop():
     if updated:
         save_data(data)
 
-# Vòng lặp tự động kiểm tra và chốt kết quả random sau 12 tiếng
 @tasks.loop(minutes=5)
 async def check_challenge_cloisters():
     data = load_data()
     now = datetime.now()
     updated = False
     
-    # Tạo bản sao danh sách các tầng đang mở đăng ký để duyệt qua
-    active_sessions = list(data.get("active_registrations", {}).items())
+    if "active_registrations" not in data:
+        data["active_registrations"] = {}
+        save_data(data)
+        return
+
+    active_sessions = list(data["active_registrations"].items())
     
     for tang_str, session in active_sessions:
         end_time = datetime.fromisoformat(session["end_at"])
         if now >= end_time:
-            # Tìm kênh gym để gửi thông báo công bố kết quả
             channel = bot.get_channel(GYM_CHANNEL_ID)
             challengers = session["challengers"]
             tower_info = data["towers"][tang_str]
             owner_id = tower_info["user_id"]
+            owner_mention = f"<@{owner_id}>" if owner_id else "*(Trống)*"
             
             if not challengers:
                 if channel:
-                    await channel.send(f"⏳ **Thời gian đăng ký Tầng {tang_str} đã hết.** Không có Trainer nào nộp đơn thách đấu!")
+                    await channel.send(f"⏳ **Thời gian đăng ký Tầng {tang_str} đã hết.** Không có ai nộp đơn thách đấu!")
             else:
-                # Tiến hành bốc thăm may mắn
                 lucky_challenger_id = random.choice(challengers)
-                
                 if channel:
-                    owner_mention = f"<@{owner_id}>" if owner_id else "*(Trống)*"
                     embed = discord.Embed(
                         title=f"⚔️ KẾT QUẢ BỐC THĂM THÁCH ĐẤU TẦNG {tang_str} ⚔️",
-                        description=f"Hệ thống đã chọn ngẫu nhiên người thách đấu may mắn trong số `{len(challengers)}` ứng viên!",
+                        description=f"Hệ thống đã chọn ngẫu nhiên người thách đấu may mắn từ `{len(challengers)}` ứng viên!",
                         color=0xe74c3c
                     )
                     embed.add_field(name="👑 Quản Tháp", value=owner_mention, inline=True)
                     embed.add_field(name="🗡️ Người Thách Đấu", value=f"<@{lucky_challenger_id}>", inline=True)
-                    embed.add_field(name="🕒 Khung giờ Quản Tháp nhận trận", value=f"`{session['owner_time']}`", inline=False)
-                    embed.add_field(name="🕒 Khung giờ Người thách đấu đánh", value=f"`{session['challenger_time']}`", inline=False)
-                    embed.add_field(name="📜 Thể thức thi đấu", value=get_teambuilding_text(), inline=False)
+                    embed.add_field(name="🕒 Khung giờ Quản Tháp", value=f"`{session['owner_time']}`", inline=False)
+                    embed.add_field(name="🕒 Khung giờ Thách Đấu", value=f"`{session['challenger_time']}`", inline=False)
+                    embed.add_field(name="📜 Quy chế Teambuilding", value=get_teambuilding_text(), inline=False)
                     
-                    # Tag trực tiếp tên cả hai người để họ nhận thông báo ngay lập tức
                     await channel.send(content=f"🔔 Chúc mừng <@{lucky_challenger_id}> trúng suất thi đấu với Quản tháp {owner_mention}!", embed=embed)
             
-            # Xóa phiên đăng ký của tầng này sau khi đã giải quyết xong
             del data["active_registrations"][tang_str]
             updated = True
             
@@ -159,10 +162,9 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 # --- CÁC LỆNH SLASH COMMANDS ---
 
-@bot.tree.command(name="mo_thach_dau", description="[DÀNH CHO BẠN] Bắt đầu nhận lời thách đấu cho một tầng trong vòng 12 tiếng.")
+@bot.tree.command(name="mo_thach_dau", description="Bắt đầu nhận lời thách đấu cho một tầng trong vòng 12 tiếng.")
 @is_gym_channel()
 async def mo_thach_dau(interaction: discord.Interaction, tang: int, khung_gio_quan_thap: str, khung_gio_nguoi_dau: str):
-    # Giới hạn chỉ có ID cụ thể của bạn hoặc Admin mới được chạy lệnh này
     if interaction.user.id != YOUR_DISCORD_ID and not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("❌ Bạn không có quyền sử dụng lệnh đặc biệt này!", ephemeral=True)
         return
@@ -174,8 +176,6 @@ async def mo_thach_dau(interaction: discord.Interaction, tang: int, khung_gio_qu
 
     data = load_data()
     tang_str = str(tang)
-    
-    # Thiết lập mốc kết thúc sau đúng 12 tiếng
     now = datetime.now()
     end_time = now + timedelta(hours=12)
     
@@ -183,19 +183,19 @@ async def mo_thach_dau(interaction: discord.Interaction, tang: int, khung_gio_qu
         "owner_time": khung_gio_quan_thap,
         "challenger_time": khung_gio_nguoi_dau,
         "end_at": end_time.isoformat(),
-        "challengers": []  # Danh sách ID người nộp đơn đăng ký
+        "challengers": []
     }
     save_data(data)
     
     embed = discord.Embed(
         title=f"📢 BẮT ĐẦU NHẬN LỜI THÁCH ĐẤU - TẦNG {tang}",
-        description=f"Cổng đăng ký thách đấu đã mở! Hệ thống sẽ đóng đơn và tự động bốc thăm sau **12 giờ**.",
+        description="Cổng đăng ký thách đấu đã mở! Hệ thống sẽ đóng đơn và tự động bốc thăm sau **12 giờ**.",
         color=0x2ecc71
     )
     embed.add_field(name="👑 Quản tháp nhận trận", value=f"`{khung_gio_quan_thap}` (Khung 2 tiếng)", inline=False)
     embed.add_field(name="🗡️ Người thách đấu có thể đánh", value=f"`{khung_gio_nguoi_dau}` (Khung 2 tiếng)", inline=False)
     embed.add_field(name="⏰ Thời gian đóng hòm phiếu", value=f"{end_time.strftime('%H:%M - %d/%m/%Y')}", inline=False)
-    embed.add_field(name="✍️ Cách thức tham gia", value=f"Gõ lệnh `/thach_dau` và chọn tầng `{tang}` để ghi danh vào danh sách may mắn!", inline=False)
+    embed.add_field(name="✍️ Cách thức tham gia", value=f"Gõ lệnh `/thach_dau` và chọn tầng `{tang}` để ghi danh!", inline=False)
     
     await interaction.response.send_message(embed=embed)
 
@@ -213,12 +213,10 @@ async def thach_dau(interaction: discord.Interaction, tang: int):
     user_id_str = str(user_id)
     now = datetime.now()
     
-    # 1. Kiểm tra xem tầng này đã được Admin mở đăng ký chưa
     if tang_str not in data.get("active_registrations", {}):
         await interaction.response.send_message(f"❌ Tầng {tang} hiện tại đang đóng, chưa mở nhận đơn thách đấu từ Admin!", ephemeral=True)
         return
         
-    # 2. Kiểm tra thời gian hồi chiêu (Cooldown) cá nhân
     cd_key = f"{user_id_str}_{tang}"
     if cd_key in data["cooldowns"]:
         cd_time = datetime.fromisoformat(data["cooldowns"][cd_key])
@@ -228,8 +226,18 @@ async def thach_dau(interaction: discord.Interaction, tang: int):
             await interaction.response.send_message(f"❌ Bạn đang trong thời gian hồi chiêu phục thù! Còn {remaining.days} ngày {hours} giờ.", ephemeral=True)
             return
 
-    # 3. Kiểm tra xem Quản tháp hiện tại có đang được bảo hộ không
     tower_info = data["towers"][tang_str]
     if tower_info["protected_until"]:
         p_time = datetime.fromisoformat(tower_info["protected_until"])
         if now < p_time:
+            await interaction.response.send_message(f"🛡️ Quản Tháp tầng này đang được bảo hộ đến: `{p_time.strftime('%H:%M - %d/%m/%Y')}`. Không thể thách đấu!", ephemeral=True)
+            return
+
+    if user_id in data["active_registrations"][tang_str]["challengers"]:
+        await interaction.response.send_message(f"⚠️ Bạn đã có tên trong danh sách đăng ký Tầng {tang} rồi, vui lòng đợi hệ thống bốc thăm!", ephemeral=True)
+        return
+        
+    data["active_registrations"][tang_str]["challengers"].append(user_id)
+    save_data(data)
+    await interaction.response.send_message(f"✅ Ghi danh thành công! Trainer {interaction.user.mention} đã tham gia vào hàng chờ bốc thăm Tầng {tang}.", ephemeral=False)
+
