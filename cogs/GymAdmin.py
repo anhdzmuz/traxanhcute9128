@@ -2,103 +2,155 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timedelta
-from cogs.core import load_data, save_data, is_gym_channel, get_teambuilding_text
 
-# ID Discord của bạn để phân quyền tối cao cho lệnh thăng chức bằng tay
-YOUR_DISCORD_ID = 1031799680792809522  
+from cogs.core import (
+    OWNER_ID, award_achievements, get_player, get_teambuilding_text,
+    is_gym_channel, is_owner, load_data, save_data,
+)
+
 
 class GymAdmin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="promote_darkgym", description="[OWNER] Thăng chức bằng tay cho một thành viên lên vị trí Quản Tháp.")
+    async def owner_only(self, interaction):
+        if not is_owner(interaction.user.id):
+            await interaction.response.send_message("❌ Chỉ Owner của Dark Gym mới có quyền sử dụng lệnh này!", ephemeral=True)
+            return False
+        return True
+
+    @app_commands.command(name="promote_darkgym", description="[OWNER] Chỉ định Quản Tháp cho một tầng.")
     @is_gym_channel()
     async def promote_darkgym(self, interaction: discord.Interaction, member: discord.User, tang: int):
-        # Kiểm tra quyền hạn tối cao
-        if interaction.user.id != YOUR_DISCORD_ID:
-            await interaction.response.send_message("❌ Bạn không có quyền hạn tối cao để sử dụng lệnh thăng chức này!", ephemeral=True)
+        if not await self.owner_only(interaction):
+            return
+        if str(tang) not in "123":
+            await interaction.response.send_message("❌ Tầng không hợp lệ! Chọn tầng 1 đến 3.", ephemeral=True)
             return
 
-        valid_towers = str("123")
-        if str(tang) not in valid_towers:
-            await interaction.response.send_message("Tầng không hợp lệ! Hãy chọn tầng từ 1 đến 3.", ephemeral=True)
-            return
-            
         data = load_data()
-        tang_str = str(tang)
-        now = datetime.now()
-        
-        # SỬA LỖI: Ép kiểu ID thành số nguyên (int) để đồng bộ hoàn toàn với hàm thap_gym
-        data["towers"][tang_str]["user_id"] = int(member.id)
-        data["towers"][tang_str]["protected_until"] = (now + timedelta(hours=12)).isoformat()
+        tier = str(tang)
+        old_owner = data["towers"][tier].get("user_id")
+        data["towers"][tier]["user_id"] = member.id
+        data["towers"][tier]["protected_until"] = (datetime.now() + timedelta(hours=12)).isoformat()
+        data["towers"][tier]["defense_streak"] = 0
         save_data(data)
-        
-        embed = discord.Embed(
-            title="👑 LỆNH ĐIỀU ĐỘNG QUẢN THÁP TỐI CAO 👑",
-            description=f"Nhà sáng lập {interaction.user.mention} đã ban sắc lệnh chỉ định Quản Tháp mới bằng tay!",
-            color=0xf1c40f # Màu vàng hoàng gia
-        )
-        embed.add_field(name="🏰 Địa điểm", value=f"**Tầng {tang}** ➔ {data['towers'][tang_str]['title']}", inline=False)
+
+        embed = discord.Embed(title="👑 LỆNH ĐIỀU ĐỘNG QUẢN THÁP", color=0xf1c40f)
+        embed.description = f"{interaction.user.mention} đã chỉ định Quản Tháp mới."
+        embed.add_field(name="🏰 Tầng", value=f"**{tang}** — {data['towers'][tier]['title']}", inline=False)
         embed.add_field(name="👑 Tân Quản Tháp", value=member.mention, inline=True)
-        embed.add_field(name="🛡️ Thời gian bảo hộ", value="`12 tiếng` *(Bắt đầu ngay lập tức)*", inline=True)
-        embed.set_footer(text="Sắc lệnh có hiệu lực ngay khi được ban bố.")
-        
+        embed.add_field(name="🛡️ Bảo hộ", value="12 giờ", inline=True)
+        if old_owner:
+            embed.add_field(name="📜 Người tiền nhiệm", value=f"<@{old_owner}>", inline=False)
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="thap_gym", description="Xem danh sách Quản Tháp.")
+    @app_commands.command(name="thap_gym", description="Xem trạng thái 3 tầng Dark Gym.")
     @is_gym_channel()
     async def thap_gym(self, interaction: discord.Interaction):
         data = load_data()
         embed = discord.Embed(title="🌌 LUNAR ECLIPSE TOWER 🌌", color=0x2f3136)
-        
         for tier, info in sorted(data["towers"].items()):
-            # SỬA LỖI: Kiểm tra an toàn xem user_id có tồn tại không và lấy dạng chuỗi/số chuẩn xác
-            u_id = info.get("user_id")
-            user_mention = f"<@{u_id}>" if u_id else "*Trống (Đang tuyển chọn)*"
-            
-            protection_str = ""
+            owner = info.get("user_id")
+            owner_text = f"<@{owner}>" if owner else "*Trống (Đang tuyển chọn)*"
+            protection = ""
             if info.get("protected_until"):
                 p_time = datetime.fromisoformat(info["protected_until"])
                 if p_time > datetime.now():
-                    protection_str = f"\n⚠️ *Bảo hộ đến:* {p_time.strftime('%H:%M - %d/%m/%Y')}"
-                    
-            embed.add_field(name=f"Tầng {tier} ➔ {info['title']}", value=f"👑 **Quản Tháp:** {user_mention}{protection_str}", inline=False)
-            
+                    protection = f"\n🛡️ Bảo hộ đến: `{p_time.strftime('%H:%M - %d/%m/%Y')}`"
+            streak = info.get("defense_streak", 0)
+            embed.add_field(
+                name=f"Tầng {tier} ➔ {info['title']}",
+                value=f"👑 **Quản Tháp:** {owner_text}\n🔥 Defense Streak: **{streak}**{protection}",
+                inline=False,
+            )
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="ket_qua_gym", description="[ADMIN] Cập nhật kết quả.")
-    @commands.has_permissions(administrator=True)
+    @app_commands.command(name="ket_qua_gym", description="[OWNER] Chốt kết quả trận đang diễn ra.")
+    @app_commands.choices(ket_qua=[
+        app_commands.Choice(name="Challenger thắng", value="thang"),
+        app_commands.Choice(name="Quản Tháp thắng", value="thua"),
+    ])
     @is_gym_channel()
-    async def ket_qua_gym(self, interaction: discord.Interaction, tang: int, nguoi_thach_dau: discord.User, ket_qua: str):
-        if str(tang) not in "123":
-            await interaction.response.send_message("Tầng không hợp lệ!", ephemeral=True)
+    async def ket_qua_gym(self, interaction: discord.Interaction, tang: int, ket_qua: app_commands.Choice[str]):
+        if not await self.owner_only(interaction):
             return
-            
-        data = load_data()
-        tang_str = str(tang)
-        now = datetime.now()
-        challenger_id_str = str(nguoi_thach_dau.id)
-        current_owner_id = data["towers"][tang_str]["user_id"]
-        
-        if ket_qua.lower() == "thang":
-            # Đảm bảo lưu đúng định dạng int thống nhất toàn bộ bot
-            data["towers"][tang_str]["user_id"] = int(nguoi_thach_dau.id)
-            data["towers"][tang_str]["protected_until"] = (now + timedelta(hours=12)).isoformat()
-            save_data(data)
-            await interaction.response.send_message(f"🎉 Người thách đấu {nguoi_thach_dau.mention} đã chiếm ngôi Tầng {tang}!")
-        elif ket_qua.lower() == "thua":
-            data["cooldowns"][f"{challenger_id_str}_{tang}"] = (now + timedelta(hours=48)).isoformat()
-            if current_owner_id:
-                data["wallets"][str(current_owner_id)] = data["wallets"].get(str(current_owner_id), 0) + 15
-            save_data(data)
-            await interaction.response.send_message(f"💀 Quản tháp bảo vệ ngôi thành công! {nguoi_thach_dau.mention} bị cấm phục thù 48 giờ.")
+        if str(tang) not in "123":
+            await interaction.response.send_message("❌ Tầng không hợp lệ!", ephemeral=True)
+            return
 
-    @app_commands.command(name="teambuilding", description="Xem quy định về cách xây dựng đội hình thi đấu.")
-    @is_gym_channel()
-    async def teambuilding(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="📝 QUY ĐỊNH TEAMBUILDING - THÁNH ĐỊA BÓNG ĐÊM", color=0x71368a)
-        embed.description = get_teambuilding_text()
+        data = load_data()
+        tier = str(tang)
+        match = data["active_matches"].get(tier)
+        if not match:
+            await interaction.response.send_message(f"❌ Tầng {tang} hiện không có trận đấu đang diễn ra.", ephemeral=True)
+            return
+
+        challenger_id = int(match["challenger_id"])
+        owner_id = int(match["owner_id"])
+        tower = data["towers"][tier]
+        now = datetime.now()
+
+        challenger = get_player(data, challenger_id)
+        owner = get_player(data, owner_id)
+        challenger["win_streak"] = challenger.get("win_streak", 0)
+        owner["win_streak"] = owner.get("win_streak", 0)
+
+        if ket_qua.value == "thang":
+            challenger["wins"] += 1
+            challenger["captures"] += 1
+            challenger["win_streak"] += 1
+            challenger["best_win_streak"] = max(challenger["best_win_streak"], challenger["win_streak"])
+            if tier not in challenger["towers_captured"]:
+                challenger["towers_captured"].append(tier)
+            owner["losses"] += 1
+            owner["win_streak"] = 0
+            tower["user_id"] = challenger_id
+            tower["protected_until"] = (now + timedelta(hours=12)).isoformat()
+            tower["defense_streak"] = 0
+            result_text = f"🏆 <@{challenger_id}> đã **chiếm ngôi** Tầng {tang}!"
+        else:
+            challenger["losses"] += 1
+            challenger["win_streak"] = 0
+            owner["wins"] += 1
+            owner["defenses"] += 1
+            owner["win_streak"] += 1
+            owner["best_win_streak"] = max(owner["best_win_streak"], owner["win_streak"])
+            tower["defense_streak"] = tower.get("defense_streak", 0) + 1
+            data["wallets"][str(owner_id)] = data["wallets"].get(str(owner_id), 0) + 15
+            data["cooldowns"][f"{challenger_id}_{tang}"] = (now + timedelta(hours=48)).isoformat()
+            result_text = f"🛡️ <@{owner_id}> đã **phòng thủ thành công** Tầng {tang}!"
+
+        new_achievements = []
+        new_achievements.extend(award_achievements(data, challenger_id))
+        new_achievements.extend(award_achievements(data, owner_id))
+
+        match_id = match["match_id"]
+        data["match_history"].append({
+            "match_id": match_id,
+            "tower": tang,
+            "challenger_id": challenger_id,
+            "owner_id": owner_id,
+            "result": ket_qua.value,
+            "ended_at": now.strftime("%Y-%m-%d %H:%M"),
+        })
+        data["match_history"] = data["match_history"][-100:]
+        del data["active_matches"][tier]
+        save_data(data)
+
+        embed = discord.Embed(title=f"⚔️ KẾT QUẢ MATCH #{match_id}", description=result_text, color=0x2ecc71 if ket_qua.value == "thang" else 0x3498db)
+        embed.add_field(name="🏰 Tầng", value=f"{tang} — {tower['title']}", inline=True)
+        embed.add_field(name="🗡️ Challenger", value=f"<@{challenger_id}>", inline=True)
+        embed.add_field(name="👑 Quản Tháp cũ", value=f"<@{owner_id}>", inline=True)
+        if ket_qua.value == "thua":
+            embed.add_field(name="✨ Phần thưởng", value="Quản Tháp nhận **+15 Dark Stardust**\nChallenger cooldown **48 giờ**", inline=False)
+        else:
+            embed.add_field(name="🛡️ Bảo hộ", value="Quản Tháp mới được bảo hộ **12 giờ**", inline=False)
+        if new_achievements:
+            embed.add_field(name="🏅 Achievement mới", value="\n".join(set(new_achievements)), inline=False)
         await interaction.response.send_message(embed=embed)
+
+
 
 async def setup(bot):
     await bot.add_cog(GymAdmin(bot))
