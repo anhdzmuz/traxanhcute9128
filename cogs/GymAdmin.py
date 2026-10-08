@@ -16,7 +16,7 @@ class GymAdmin(commands.Cog):
     async def promote_darkgym(self, interaction: discord.Interaction, member: discord.User, tang: int):
         # Kiểm tra điều kiện: Chỉ duy nhất tài khoản có ID của bạn mới được sử dụng lệnh này
         if interaction.user.id != YOUR_DISCORD_ID:
-            await interaction.response.send_message("❌ Bạn không có quyền hạn tối cao để sử dụng lệnh thăng chức này!", ephemeral=True)
+            await interaction.response.send_message("❌ Bạn không có quyền hạn tối cao để sử dụng lệnh thăng chức này! , 1 tờ xanh xanh hình như có thể giải quyết vấn đề", ephemeral=True)
             return
 
         valid_towers = str("123")
@@ -34,14 +34,14 @@ class GymAdmin(commands.Cog):
         save_data(data)
         
         embed = discord.Embed(
-            title="👑 LỆNH ĐIỀU ĐỘNG QUẢN THÁP TỐI CAO 👑",
-            description=f"Sếp {interaction.user.mention} đã ban cơ cấu thành công với thù lao 1 tờ xanh xanh và nụ hôn lốc xoáy kiểu Pháp",
+            title="Cơ cấu bằng cơm",
+            description=f"Sếp {interaction.user.mention} đã ban cơ cấu thành công với thù lao tờ xanh xanh và 1 nụ hôn lốc xoáy kiểu Pháp",
             color=0xf1c40f # Màu vàng hoàng gia
         )
-        embed.add_field(name="👑Vị trí ", value=f"**Tầng {tang}** ➔ {data['towers'][tang_str]['title']}", inline=False)
-        embed.add_field(name="👑 Tân Quản Tháp", value=member.mention, inline=True)
-        embed.add_field(name="🛡️ Thời gian bảo vệ", value="`12 tiếng` *Started*", inline=True)
-        embed.set_footer(text="Sắc lệnh có hiệu lực ngay khi được ban bố.")
+        embed.add_field(name="Vị trí ", value=f"**Tầng {tang}** ➔ {data['towers'][tang_str]['title']}", inline=False)
+        embed.add_field(name="Tân Quản Tháp", value=member.mention, inline=True)
+        embed.add_field(name="Thời gian bảo vệ", value="`12 tiếng` *Started*", inline=True)
+        embed.set_footer(text="Hiệu lực bắt đầu ngay lúc tin nhắn này được gửi.")
         
         await interaction.response.send_message(embed=embed)
 
@@ -89,7 +89,7 @@ class GymAdmin(commands.Cog):
     @app_commands.command(name="teambuilding", description="Xem quy định về cách xây dựng đội hình thi đấu.")
     @is_gym_channel()
     async def teambuilding(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="📝 QUY ĐỊNH TEAMBUILDING - THÁNH ĐỊA BÓNG ĐÊM", color=0x71368a)
+        embed = discord.Embed(title=" QUY ĐỊNH TEAMBUILDING - THÁNH ĐỊA BÓNG ĐÊM", color=0x71368a)
         embed.description = get_teambuilding_text()
         await interaction.response.send_message(embed=embed)
 
