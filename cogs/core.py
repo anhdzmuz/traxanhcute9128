@@ -43,9 +43,9 @@ def is_gym_channel():
 
 def get_teambuilding_text():
     return (
-        "⚠️ **LƯU Ý QUY ĐỊNH VỀ TEAMBUILDING:**\n"
+        "⚠️ **LƯU Ý QUY ĐỊNH TEAMBUILDING:**\n"
         "• **Core Hệ Dark:** Cả Quản tháp & Người thách đấu bắt buộc mang tối thiểu **3/6 Pokémon** hệ Dark.\n"
-        "• **Hybrid Team Sheet:**
+        "• **Hybrid Team Sheet:**\n"
         "  ➔ Chỉ công khai (Move, Nature, Item, Gender) của **4/6 Pokémon** trong đội.\n"
         "  ➔ **2 Pokémon còn lại** sẽ được giấu kín hoàn toàn mọi thông tin trên."
     )
@@ -77,14 +77,6 @@ class Core(commands.Cog):
         data = load_data()
         balance = data["wallets"].get(str(interaction.user.id), 0)
         await interaction.response.send_message(f"🔮 Số dư của bạn: ✨ **{balance} Dark Stardust**")
-
-    @commands.Cog.listener()
-    async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        if isinstance(error, app_commands.CheckFailure):
-            await interaction.response.send_message(
-                f"🚫 Lệnh này chỉ được sử dụng tại kênh: <#{GYM_CHANNEL_ID}>!", 
-                ephemeral=True
-            )
 
 async def setup(bot):
     await bot.add_cog(Core(bot))
