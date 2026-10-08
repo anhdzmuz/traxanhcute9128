@@ -31,7 +31,7 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 DATA_FILE = "gym_data.json"
 
 # 🔒 HÃY THAY ID KÊNH GYM CỦA BẠN VÀO ĐÂY ĐỂ KHÓA KÊNH HOẠT ĐỘNG
-GYM_CHANNEL_ID = 1234567890123456789  
+GYM_CHANNEL_ID = 1147411953501880390  
 
 default_data = {
     "towers": {
