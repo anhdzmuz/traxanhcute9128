@@ -179,4 +179,5 @@ async def stardust_altar(interaction: discord.Interaction):
 keep_alive()
 
 # Chạy Bot qua biến môi trường của Render
-bot.run(os.environ.get("MTU1NzU4ODEwMzUyOTQ5NjU5Ng.Gyu0gR.HXFFUSM5wV3FoYrMPV2xoTr-Y5FRuaxviKv9LY"))
+bot.run("MTU1NzU4ODEwMzUyOTQ5NjU5Ng.Gyu0gR.HXFFUSM5wV3FoYrMPV2xoTr-Y5FRuaxviKv9LY")
+
