@@ -29,8 +29,6 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 DATA_FILE = "gym_data.json"
-
-# 🔒 HÃY THAY ID KÊNH GYM CỦA BẠN VÀO ĐÂY ĐỂ KHÓA KÊNH HOẠT ĐỘNG
 GYM_CHANNEL_ID = 1147411953501880390  
 
 default_data = {
@@ -55,15 +53,10 @@ def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
+# Tối ưu hóa hàm kiểm tra kênh để tránh lỗi chặn đồng bộ lệnh (Command Sync)
 def is_gym_channel():
-    async def predicate(interaction: discord.Interaction) -> bool:
-        if interaction.channel_id != GYM_CHANNEL_ID:
-            await interaction.response.send_message(
-                f"🚫 Lệnh này chỉ được sử dụng tại kênh: <#{GYM_CHANNEL_ID}>!", 
-                ephemeral=True
-            )
-            return False
-        return True
+    def predicate(interaction: discord.Interaction) -> bool:
+        return interaction.channel_id == GYM_CHANNEL_ID
     return app_commands.check(predicate)
 
 @tasks.loop(hours=3)
@@ -82,13 +75,24 @@ async def reward_stardust_loop():
 @bot.event
 async def on_ready():
     print(f"Bot {bot.user.name} đã sẵn sàng vận hành!")
-    try:
-        synced = await bot.tree.sync()
-        print(f"Đã đồng bộ {len(synced)} lệnh.")
-    except Exception as e:
-        print(e)
     if not reward_stardust_loop.is_running():
         reward_stardust_loop.start()
+    
+    # Đồng bộ lệnh an toàn sau khi bot kết nối hoàn tất
+    try:
+        synced = await bot.tree.sync()
+        print(f"🎉 Đã đồng bộ thành công {len(synced)} lệnh Slash Commands.")
+    except Exception as e:
+        print(f"❌ Lỗi đồng bộ lệnh: {e}")
+
+# Xử lý báo lỗi tập trung khi người chơi gõ sai kênh quy định
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CheckFailure):
+        await interaction.response.send_message(
+            f"🚫 Lệnh này chỉ được sử dụng tại kênh: <#{GYM_CHANNEL_ID}>!", 
+            ephemeral=True
+        )
 
 # --- CÁC LỆNH SLASH COMMANDS ---
 @bot.tree.command(name="thap_gym", description="Xem danh sách Quản Tháp.")
@@ -109,7 +113,6 @@ async def thap_gym(interaction: discord.Interaction):
 @bot.tree.command(name="thach_dau", description="Gửi lời thách đấu.")
 @is_gym_channel()
 async def thach_dau(interaction: discord.Interaction, tang: int):
-    # Sử dụng hàm string để né lỗi nuốt ký tự hệ thống
     valid_towers = str("123")
     if str(tang) not in valid_towers:
         await interaction.response.send_message("Tầng không hợp lệ! Hãy chọn tầng từ 1 đến 3.", ephemeral=True)
@@ -175,39 +178,33 @@ async def stardust_altar(interaction: discord.Interaction):
     balance = data["wallets"].get(str(interaction.user.id), 0)
     await interaction.response.send_message(f"🔮 Số dư của bạn: ✨ **{balance} Dark Stardust**")
 
-#quytac
 @bot.tree.command(name="teambuilding", description="Xem quy định về cách xây dựng đội hình thi đấu.")
 @is_gym_channel()
 async def teambuilding(interaction: discord.Interaction):
     embed = discord.Embed(
         title="📝 QUY ĐỊNH TEAMBUILDING - THÁNH ĐỊA BÓNG ĐÊM", 
-        color=0x71368a # Màu tím tối phù hợp với chủ đề bóng đêm
+        color=0x71368a
     )
-    
     embed.add_field(
         name="🌌 Core Hệ Dark", 
         value="• Quản tháp / Người thách đấu bắt buộc phải mang tối thiểu **3/6 Pokémon** mang hệ Dark.", 
         inline=False
     )
-    
     embed.add_field(
-        name=" Hybrid Team Sheet", 
+        name="📜 Hybrid Team Sheet", 
         value=(
-            " *\" Ánh sáng phơi bày chiến thuật, bóng tối định đoạt thắng thua \"*\n\n"
+            "👉 *\" Ánh sáng phơi bày chiến thuật, bóng tối định đoạt thắng thua \"*\n\n"
             "• Chỉ công khai (**Move, Nature, Item, Gender**) của **4/6 Pokémon** trong đội.\n"
             "• **2 Pokémon còn lại** sẽ được giấu kín hoàn toàn mọi thông tin trên."
         ), 
         inline=False
     )
-    
     embed.set_footer(text="Hãy chuẩn bị đội hình thật kỹ trước khi gửi lời thách đấu!")
-    
     await interaction.response.send_message(embed=embed)
-
 
 # Kích hoạt Web Server trước rồi chạy Bot
 keep_alive()
 
-# Chạy Bot qua biến môi trường của Render
-bot.run("MTU1NzU4ODEwMzUyOTQ5NjU5Ng.Gyu0gR.HXFFUSM5wV3FoYrMPV2xoTr-Y5FRuaxviKv9LY")
-
+# Bảo mật token bằng Environment Variable (Biến môi trường) trên Render
+BOT_TOKEN = os.environ.get("DISCORD_TOKEN", "MTU1NzU4ODEwMzUyOTQ5NjU5Ng.Gyu0gR.HXFFUSM5wV3FoYrMPV2xoTr-Y5FRuaxviKv9LY")
+bot.run(BOT_TOKEN)
