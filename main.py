@@ -175,6 +175,36 @@ async def stardust_altar(interaction: discord.Interaction):
     balance = data["wallets"].get(str(interaction.user.id), 0)
     await interaction.response.send_message(f"🔮 Số dư của bạn: ✨ **{balance} Dark Stardust**")
 
+#quytac
+@bot.tree.command(name="teambuilding", description="Xem quy định về cách xây dựng đội hình thi đấu.")
+@is_gym_channel()
+async def teambuilding(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="📝 QUY ĐỊNH TEAMBUILDING - THÁNH ĐỊA BÓNG ĐÊM", 
+        color=0x71368a # Màu tím tối phù hợp với chủ đề bóng đêm
+    )
+    
+    embed.add_field(
+        name="🌌 Core Hệ Dark", 
+        value="• Quản tháp / Người thách đấu bắt buộc phải mang tối thiểu **3/6 Pokémon** mang hệ Dark.", 
+        inline=False
+    )
+    
+    embed.add_field(
+        name=" Hybrid Team Sheet", 
+        value=(
+            " *\" Ánh sáng phơi bày chiến thuật, bóng tối định đoạt thắng thua \"*\n\n"
+            "• Chỉ công khai (**Move, Nature, Item, Gender**) của **4/6 Pokémon** trong đội.\n"
+            "• **2 Pokémon còn lại** sẽ được giấu kín hoàn toàn mọi thông tin trên."
+        ), 
+        inline=False
+    )
+    
+    embed.set_footer(text="Hãy chuẩn bị đội hình thật kỹ trước khi gửi lời thách đấu!")
+    
+    await interaction.response.send_message(embed=embed)
+
+
 # Kích hoạt Web Server trước rồi chạy Bot
 keep_alive()
 
