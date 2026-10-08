@@ -108,7 +108,7 @@ async def thap_gym(interaction: discord.Interaction):
 @bot.tree.command(name="thach_dau", description="Gửi lời thách đấu.")
 @is_gym_channel()
 async def thach_dau(interaction: discord.Interaction, tang: int):
-    if tang not in:
+    if tang not in [1, 2, 3]:
         await interaction.response.send_message("Tầng không hợp lệ!", ephemeral=True)
         return
     data = load_data()
@@ -137,7 +137,7 @@ async def thach_dau(interaction: discord.Interaction, tang: int):
 @commands.has_permissions(administrator=True)
 @is_gym_channel()
 async def ket_qua_gym(interaction: discord.Interaction, tang: int, nguoi_thach_dau: discord.User, ket_qua: str):
-    if tang not in: return
+    if tang not in [1, 2, 3]:
     data = load_data()
     tang_str = str(tang)
     now = datetime.now()
