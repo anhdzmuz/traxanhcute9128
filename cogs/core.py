@@ -45,7 +45,7 @@ def get_teambuilding_text():
     return (
         "⚠️ **LƯU Ý QUY ĐỊNH VỀ TEAMBUILDING:**\n"
         "• **Core Hệ Dark:** Cả Quản tháp & Người thách đấu bắt buộc mang tối thiểu **3/6 Pokémon** hệ Dark.\n"
-        "• **Hybrid Team Sheet:
+        "• **Hybrid Team Sheet:**
         "  ➔ Chỉ công khai (Move, Nature, Item, Gender) của **4/6 Pokémon** trong đội.\n"
         "  ➔ **2 Pokémon còn lại** sẽ được giấu kín hoàn toàn mọi thông tin trên."
     )
