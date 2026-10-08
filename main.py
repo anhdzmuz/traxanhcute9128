@@ -16,7 +16,6 @@ def home():
     return "Thánh Địa Bóng Đêm đang hoạt động ổn định!"
 
 def run_web():
-    # Render yêu cầu chạy trên cổng được cấp qua biến môi trường PORT
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
@@ -30,7 +29,9 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 DATA_FILE = "gym_data.json"
-GYM_CHANNEL_ID = 1234567890123456789  # Thay ID kênh của bạn vào đây
+
+# 🔒 HÃY THAY ID KÊNH GYM CỦA BẠN VÀO ĐÂY ĐỂ KHÓA KÊNH HOẠT ĐỘNG
+GYM_CHANNEL_ID = 1234567890123456789  
 
 default_data = {
     "towers": {
@@ -108,13 +109,15 @@ async def thap_gym(interaction: discord.Interaction):
 @bot.tree.command(name="thach_dau", description="Gửi lời thách đấu.")
 @is_gym_channel()
 async def thach_dau(interaction: discord.Interaction, tang: int):
-    if tang not in [1, 2, 3]:
-        await interaction.response.send_message("Tầng không hợp lệ!", ephemeral=True)
+    if tang not in:
+        await interaction.response.send_message("Tầng không hợp lệ! Hãy chọn tầng từ 1 đến 3.", ephemeral=True)
         return
+    
     data = load_data()
     user_id_str = str(interaction.user.id)
     now = datetime.now()
     cd_key = f"{user_id_str}_{tang}"
+    
     if cd_key in data["cooldowns"]:
         cd_time = datetime.fromisoformat(data["cooldowns"][cd_key])
         if now < cd_time:
@@ -122,27 +125,34 @@ async def thach_dau(interaction: discord.Interaction, tang: int):
             hours, remainder = divmod(remaining.seconds, 3600)
             await interaction.response.send_message(f"❌ Bạn đang trong thời gian hồi chiêu phục thù! Còn {remaining.days} ngày {hours} giờ.", ephemeral=True)
             return
+            
     tower_info = data["towers"][str(tang)]
     if not tower_info["user_id"]:
         await interaction.response.send_message("Tầng này hiện đang trống!", ephemeral=True)
         return
+        
     if tower_info["protected_until"]:
         p_time = datetime.fromisoformat(tower_info["protected_until"])
         if now < p_time:
             await interaction.response.send_message(f"🛡️ Quản Tháp đang được bảo hộ đến: `{p_time.strftime('%H:%M - %d/%m/%Y')}`", ephemeral=True)
             return
+            
     await interaction.response.send_message(f"⚔️ Trainer {interaction.user.mention} thách đấu Tầng {tang}: <@{tower_info['user_id']}>!")
 
 @bot.tree.command(name="ket_qua_gym", description="[ADMIN] Cập nhật kết quả.")
 @commands.has_permissions(administrator=True)
 @is_gym_channel()
 async def ket_qua_gym(interaction: discord.Interaction, tang: int, nguoi_thach_dau: discord.User, ket_qua: str):
-    if tang not in [1, 2, 3]:
+    if tang not in:
+        await interaction.response.send_message("Tầng không hợp lệ!", ephemeral=True)
+        return
+        
     data = load_data()
     tang_str = str(tang)
     now = datetime.now()
     challenger_id_str = str(nguoi_thach_dau.id)
     current_owner_id = data["towers"][tang_str]["user_id"]
+    
     if ket_qua.lower() == "thang":
         data["towers"][tang_str]["user_id"] = nguoi_thach_dau.id
         data["towers"][tang_str]["protected_until"] = (now + timedelta(hours=12)).isoformat()
@@ -165,6 +175,5 @@ async def stardust_altar(interaction: discord.Interaction):
 # Kích hoạt Web Server trước rồi chạy Bot
 keep_alive()
 
-# ⚠️ LƯU Ý LỚN: Trên Render, KHÔNG NÊN dán token trực tiếp vào đây để bảo mật. 
-# Ta sẽ dùng biến môi trường (Environment Variable) tên là DISCORD_TOKEN.
+# Chạy Bot qua biến môi trường của Render
 bot.run(os.environ.get("MTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OIMTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OIMTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OIMTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OI"))
