@@ -4,9 +4,46 @@ from discord import app_commands
 from datetime import datetime, timedelta
 from cogs.core import load_data, save_data, is_gym_channel, get_teambuilding_text
 
+# ID Discord của bạn để phân quyền tối cao cho lệnh thăng chức bằng tay
+YOUR_DISCORD_ID = 1031799680792809522  
+
 class GymAdmin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    @app_commands.command(name="promote_darkgym", description="[OWNER] Thăng chức bằng tay cho một thành viên lên vị trí Quản Tháp.")
+    @is_gym_channel()
+    async def promote_darkgym(self, interaction: discord.Interaction, member: discord.User, tang: int):
+        # Kiểm tra điều kiện: Chỉ duy nhất tài khoản có ID của bạn mới được sử dụng lệnh này
+        if interaction.user.id != YOUR_DISCORD_ID:
+            await interaction.response.send_message("❌ Bạn không có quyền hạn tối cao để sử dụng lệnh thăng chức này!", ephemeral=True)
+            return
+
+        valid_towers = str("123")
+        if str(tang) not in valid_towers:
+            await interaction.response.send_message("Tầng không hợp lệ! Hãy chọn tầng từ 1 đến 3.", ephemeral=True)
+            return
+            
+        data = load_data()
+        tang_str = str(tang)
+        now = datetime.now()
+        
+        # Tiến hành cập nhật dữ liệu Quản Tháp mới và kích hoạt 12 giờ bảo hộ thành trì
+        data["towers"][tang_str]["user_id"] = member.id
+        data["towers"][tang_str]["protected_until"] = (now + timedelta(hours=12)).isoformat()
+        save_data(data)
+        
+        embed = discord.Embed(
+            title="👑 LỆNH ĐIỀU ĐỘNG QUẢN THÁP TỐI CAO 👑",
+            description=f"Nhà sáng lập {interaction.user.mention} đã ban sắc lệnh chỉ định Quản Tháp mới bằng tay!",
+            color=0xf1c40f # Màu vàng hoàng gia
+        )
+        embed.add_field(name="🏰 Địa điểm", value=f"**Tầng {tang}** ➔ {data['towers'][tang_str]['title']}", inline=False)
+        embed.add_field(name="👑 Tân Quản Tháp", value=member.mention, inline=True)
+        embed.add_field(name="🛡️ Thời gian bảo hộ", value="`12 tiếng` *(Bắt đầu ngay lập tức)*", inline=True)
+        embed.set_footer(text="Sắc lệnh có hiệu lực ngay khi được ban bố.")
+        
+        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="thap_gym", description="Xem danh sách Quản Tháp.")
     @is_gym_channel()
