@@ -25,30 +25,39 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
+# Hàm nạp tất cả các file cogs trước khi bot đăng nhập hệ thống
+async def load_extensions():
+    if os.path.exists('./cogs'):
+        for filename in os.listdir('./cogs'):
+            if filename.endswith('.py'):
+                try:
+                    await bot.load_extension(f'cogs.{filename[:-3]}')
+                    print(f"➔ Đã tải tính năng: {filename}")
+                except Exception as e:
+                    print(f"❌ Lỗi tải file {filename}: {e}")
+    else:
+        print("⚠️ Thư mục './cogs' chưa được tạo trên GitHub!")
+
 @bot.event
 async def on_ready():
     print(f"Bot {bot.user.name} đã sẵn sàng vận hành!")
-    
-    # Quét thư mục cogs và nạp từng file tính năng độc lập
-    for filename in os.listdir('./cogs'):
-        if filename.endswith('.py'):
-            try:
-                await bot.load_extension(f'cogs.{filename[:-3]}')
-                print(f"➔ Đã tải tính năng: {filename}")
-            except Exception as e:
-                print(f"❌ Lỗi tải file {filename}: {e}")
-                
     try:
         synced = await bot.tree.sync()
         print(f"🎉 Đã đồng bộ thành công {len(synced)} lệnh Slash Commands.")
     except Exception as e:
         print(f"❌ Lỗi đồng bộ lệnh: {e}")
 
-# Kích hoạt Web Server trước rồi chạy Bot
-keep_alive()
+async def main():
+    keep_alive()
+    async with bot:
+        await load_extensions()
+        # Lấy token từ biến môi trường của Render đã cấu hình ở Bước 1
+        BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
+        if not BOT_TOKEN:
+            print("❌ KHÔNG TÌM THẤY DISCORD_TOKEN TRÊN RENDER VARIABLE!")
+            return
+        await bot.start(BOT_TOKEN)
 
-BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
-if not BOT_TOKEN:
-    BOT_TOKEN = "abc"
-
-bot.run(BOT_TOKEN)
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
