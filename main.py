@@ -109,7 +109,9 @@ async def thap_gym(interaction: discord.Interaction):
 @bot.tree.command(name="thach_dau", description="Gửi lời thách đấu.")
 @is_gym_channel()
 async def thach_dau(interaction: discord.Interaction, tang: int):
-    if tang not in:
+    # Sử dụng hàm string để né lỗi nuốt ký tự hệ thống
+    valid_towers = str("123")
+    if str(tang) not in valid_towers:
         await interaction.response.send_message("Tầng không hợp lệ! Hãy chọn tầng từ 1 đến 3.", ephemeral=True)
         return
     
@@ -143,7 +145,8 @@ async def thach_dau(interaction: discord.Interaction, tang: int):
 @commands.has_permissions(administrator=True)
 @is_gym_channel()
 async def ket_qua_gym(interaction: discord.Interaction, tang: int, nguoi_thach_dau: discord.User, ket_qua: str):
-    if tang not in:
+    valid_towers = str("123")
+    if str(tang) not in valid_towers:
         await interaction.response.send_message("Tầng không hợp lệ!", ephemeral=True)
         return
         
