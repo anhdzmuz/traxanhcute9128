@@ -35,7 +35,7 @@ class GymAdmin(commands.Cog):
         
         embed = discord.Embed(
             title="Cơ cấu bằng cơm",
-            description=f"Sếp {interaction.user.mention} đãcơ cấu thành công với thù lao tờ xanh xanh và 1 nụ hôn lốc xoáy kiểu Pháp",
+            description=f"Sếp {interaction.user.mention} đã cơ cấu thành công với thù lao tờ xanh xanh và 1 nụ hôn lốc xoáy kiểu Pháp",
             color=0xf1c40f # Màu vàng hoàng gia
         )
         embed.add_field(name="Vị trí ", value=f"**Tầng {tang}** ➔ {data['towers'][tang_str]['title']}", inline=False)
