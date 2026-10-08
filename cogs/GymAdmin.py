@@ -35,12 +35,12 @@ class GymAdmin(commands.Cog):
         
         embed = discord.Embed(
             title="👑 LỆNH ĐIỀU ĐỘNG QUẢN THÁP TỐI CAO 👑",
-            description=f"Nhà sáng lập {interaction.user.mention} đã ban sắc lệnh chỉ định Quản Tháp mới bằng tay!",
+            description=f"Sếp {interaction.user.mention} đã ban cơ cấu thành công với thù lao 1 tờ xanh xanh và nụ hôn lốc xoáy kiểu Pháp",
             color=0xf1c40f # Màu vàng hoàng gia
         )
-        embed.add_field(name="🏰 Địa điểm", value=f"**Tầng {tang}** ➔ {data['towers'][tang_str]['title']}", inline=False)
+        embed.add_field(name="👑Vị trí ", value=f"**Tầng {tang}** ➔ {data['towers'][tang_str]['title']}", inline=False)
         embed.add_field(name="👑 Tân Quản Tháp", value=member.mention, inline=True)
-        embed.add_field(name="🛡️ Thời gian bảo hộ", value="`12 tiếng` *(Bắt đầu ngay lập tức)*", inline=True)
+        embed.add_field(name="🛡️ Thời gian bảo vệ", value="`12 tiếng` *Started*", inline=True)
         embed.set_footer(text="Sắc lệnh có hiệu lực ngay khi được ban bố.")
         
         await interaction.response.send_message(embed=embed)
@@ -84,7 +84,7 @@ class GymAdmin(commands.Cog):
             if current_owner_id:
                 data["wallets"][str(current_owner_id)] = data["wallets"].get(str(current_owner_id), 0) + 15
             save_data(data)
-            await interaction.response.send_message(f"💀 Quản tháp bảo vệ ngôi thành công! {nguoi_thach_dau.mention} bị cấm phục thù 48 giờ.")
+            await interaction.response.send_message(f" Quản tháp bảo vệ ngôi thành công! {nguoi_thach_dau.mention} bị cấm phục thù 48 giờ.")
 
     @app_commands.command(name="teambuilding", description="Xem quy định về cách xây dựng đội hình thi đấu.")
     @is_gym_channel()
