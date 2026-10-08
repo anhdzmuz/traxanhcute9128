@@ -14,9 +14,9 @@ class GymAdmin(commands.Cog):
     @app_commands.command(name="promote_darkgym", description="[OWNER] Thăng chức bằng tay cho một thành viên lên vị trí Quản Tháp.")
     @is_gym_channel()
     async def promote_darkgym(self, interaction: discord.Interaction, member: discord.User, tang: int):
-        # Kiểm tra điều kiện: Chỉ duy nhất tài khoản có ID của bạn mới được sử dụng lệnh này
+        # Kiểm tra quyền hạn tối cao
         if interaction.user.id != YOUR_DISCORD_ID:
-            await interaction.response.send_message("❌ Bạn không có quyền hạn tối cao để sử dụng lệnh thăng chức này! , 1 tờ xanh xanh hình như có thể giải quyết vấn đề", ephemeral=True)
+            await interaction.response.send_message("❌ Bạn không có quyền hạn tối cao để sử dụng lệnh thăng chức này!", ephemeral=True)
             return
 
         valid_towers = str("123")
@@ -28,20 +28,20 @@ class GymAdmin(commands.Cog):
         tang_str = str(tang)
         now = datetime.now()
         
-        # Tiến hành cập nhật dữ liệu Quản Tháp mới và kích hoạt 12 giờ bảo hộ thành trì
-        data["towers"][tang_str]["user_id"] = member.id
+        # SỬA LỖI: Ép kiểu ID thành số nguyên (int) để đồng bộ hoàn toàn với hàm thap_gym
+        data["towers"][tang_str]["user_id"] = int(member.id)
         data["towers"][tang_str]["protected_until"] = (now + timedelta(hours=12)).isoformat()
         save_data(data)
         
         embed = discord.Embed(
-            title="Cơ cấu bằng cơm",
-            description=f"Sếp {interaction.user.mention} đã cơ cấu thành công với thù lao tờ xanh xanh và 1 nụ hôn lốc xoáy kiểu Pháp",
+            title="👑 LỆNH ĐIỀU ĐỘNG QUẢN THÁP TỐI CAO 👑",
+            description=f"Nhà sáng lập {interaction.user.mention} đã ban sắc lệnh chỉ định Quản Tháp mới bằng tay!",
             color=0xf1c40f # Màu vàng hoàng gia
         )
-        embed.add_field(name="Vị trí ", value=f"**Tầng {tang}** ➔ {data['towers'][tang_str]['title']}", inline=False)
-        embed.add_field(name="Tân Quản Tháp", value=member.mention, inline=True)
-        embed.add_field(name="Thời gian bảo vệ", value="`12 tiếng` *Started*", inline=True)
-        embed.set_footer(text="Hiệu lực bắt đầu ngay lúc tin nhắn này được gửi.")
+        embed.add_field(name="🏰 Địa điểm", value=f"**Tầng {tang}** ➔ {data['towers'][tang_str]['title']}", inline=False)
+        embed.add_field(name="👑 Tân Quản Tháp", value=member.mention, inline=True)
+        embed.add_field(name="🛡️ Thời gian bảo hộ", value="`12 tiếng` *(Bắt đầu ngay lập tức)*", inline=True)
+        embed.set_footer(text="Sắc lệnh có hiệu lực ngay khi được ban bố.")
         
         await interaction.response.send_message(embed=embed)
 
@@ -50,14 +50,20 @@ class GymAdmin(commands.Cog):
     async def thap_gym(self, interaction: discord.Interaction):
         data = load_data()
         embed = discord.Embed(title="🌌 LUNAR ECLIPSE TOWER 🌌", color=0x2f3136)
+        
         for tier, info in sorted(data["towers"].items()):
-            user_mention = f"<@{info['user_id']}>" if info["user_id"] else "*Trống (Đang tuyển chọn)*"
+            # SỬA LỖI: Kiểm tra an toàn xem user_id có tồn tại không và lấy dạng chuỗi/số chuẩn xác
+            u_id = info.get("user_id")
+            user_mention = f"<@{u_id}>" if u_id else "*Trống (Đang tuyển chọn)*"
+            
             protection_str = ""
-            if info["protected_until"]:
+            if info.get("protected_until"):
                 p_time = datetime.fromisoformat(info["protected_until"])
                 if p_time > datetime.now():
                     protection_str = f"\n⚠️ *Bảo hộ đến:* {p_time.strftime('%H:%M - %d/%m/%Y')}"
+                    
             embed.add_field(name=f"Tầng {tier} ➔ {info['title']}", value=f"👑 **Quản Tháp:** {user_mention}{protection_str}", inline=False)
+            
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="ket_qua_gym", description="[ADMIN] Cập nhật kết quả.")
@@ -75,7 +81,8 @@ class GymAdmin(commands.Cog):
         current_owner_id = data["towers"][tang_str]["user_id"]
         
         if ket_qua.lower() == "thang":
-            data["towers"][tang_str]["user_id"] = nguoi_thach_dau.id
+            # Đảm bảo lưu đúng định dạng int thống nhất toàn bộ bot
+            data["towers"][tang_str]["user_id"] = int(nguoi_thach_dau.id)
             data["towers"][tang_str]["protected_until"] = (now + timedelta(hours=12)).isoformat()
             save_data(data)
             await interaction.response.send_message(f"🎉 Người thách đấu {nguoi_thach_dau.mention} đã chiếm ngôi Tầng {tang}!")
@@ -84,12 +91,12 @@ class GymAdmin(commands.Cog):
             if current_owner_id:
                 data["wallets"][str(current_owner_id)] = data["wallets"].get(str(current_owner_id), 0) + 15
             save_data(data)
-            await interaction.response.send_message(f" Quản tháp bảo vệ ngôi thành công! {nguoi_thach_dau.mention} bị cấm phục thù 48 giờ.")
+            await interaction.response.send_message(f"💀 Quản tháp bảo vệ ngôi thành công! {nguoi_thach_dau.mention} bị cấm phục thù 48 giờ.")
 
     @app_commands.command(name="teambuilding", description="Xem quy định về cách xây dựng đội hình thi đấu.")
     @is_gym_channel()
     async def teambuilding(self, interaction: discord.Interaction):
-        embed = discord.Embed(title=" QUY ĐỊNH TEAMBUILDING - THÁNH ĐỊA BÓNG ĐÊM", color=0x71368a)
+        embed = discord.Embed(title="📝 QUY ĐỊNH TEAMBUILDING - THÁNH ĐỊA BÓNG ĐÊM", color=0x71368a)
         embed.description = get_teambuilding_text()
         await interaction.response.send_message(embed=embed)
 
