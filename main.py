@@ -179,4 +179,4 @@ async def stardust_altar(interaction: discord.Interaction):
 keep_alive()
 
 # Chạy Bot qua biến môi trường của Render
-bot.run(os.environ.get("MTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OIMTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OIMTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OIMTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OI"))
+bot.run(os.environ.get("MTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OIMTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OIMTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OIMTU1NzU4ODEwMzUyOTQ5NjU5Ng.GHw7yB.H9tL9mRTd-eiWbi8jB5MjfRxYlEdm-lLs7z7OI")
