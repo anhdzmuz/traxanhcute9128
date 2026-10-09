@@ -2,6 +2,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 from cogs.core import (
     OWNER_ID, award_achievements, get_player, get_teambuilding_text,
@@ -24,7 +27,7 @@ class GymAdmin(commands.Cog):
     async def promote_darkgym(self, interaction: discord.Interaction, member: discord.User, tang: int):
         if not await self.owner_only(interaction):
             return
-        if str(tang) not in "123":
+        if tang not in (1, 2, 3):
             await interaction.response.send_message("❌ Tầng không hợp lệ! Chọn tầng 1 đến 3.", ephemeral=True)
             return
 
@@ -32,8 +35,11 @@ class GymAdmin(commands.Cog):
         tier = str(tang)
         old_owner = data["towers"][tier].get("user_id")
         data["towers"][tier]["user_id"] = member.id
-        data["towers"][tier]["protected_until"] = (datetime.now() + timedelta(hours=12)).isoformat()
+        data["towers"][tier]["protected_until"] = (datetime.now(TZ) + timedelta(hours=12)).isoformat()
         data["towers"][tier]["defense_streak"] = 0
+        # A promotion changes the canonical tower owner; clear any stale request or signup tied to the previous owner.
+        data.get("pending_challenges", {}).pop(tier, None)
+        data.get("active_registrations", {}).pop(tier, None)
         save_data(data)
 
         embed = discord.Embed(title="👑 LỆNH ĐIỀU ĐỘNG QUẢN THÁP", color=0xf1c40f)
@@ -56,7 +62,9 @@ class GymAdmin(commands.Cog):
             protection = ""
             if info.get("protected_until"):
                 p_time = datetime.fromisoformat(info["protected_until"])
-                if p_time > datetime.now():
+                if p_time.tzinfo is None:
+                    p_time = p_time.replace(tzinfo=TZ)
+                if p_time > datetime.now(TZ):
                     protection = f"\n🛡️ Bảo hộ đến: `{p_time.strftime('%H:%M - %d/%m/%Y')}`"
             streak = info.get("defense_streak", 0)
             embed.add_field(
@@ -89,7 +97,7 @@ class GymAdmin(commands.Cog):
         challenger_id = int(match["challenger_id"])
         owner_id = int(match["owner_id"])
         tower = data["towers"][tier]
-        now = datetime.now()
+        now = datetime.now(TZ)
 
         challenger = get_player(data, challenger_id)
         owner = get_player(data, owner_id)
