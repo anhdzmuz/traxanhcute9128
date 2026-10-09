@@ -191,27 +191,6 @@ class Core(commands.Cog):
             f"🔮 **DARK STARDUST ALTAR**\n\n👤 {interaction.user.mention}\n✨ Số dư: **{balance} Dark Stardust**"
         )
 
-    @app_commands.command(name="dark_profile", description="Xem hồ sơ và thành tích Dark Gym.")
-    @is_gym_channel()
-    async def dark_profile(self, interaction: discord.Interaction, member: discord.User | None = None):
-        target = member or interaction.user
-        data = load_data()
-        player = get_player(data, target.id)
-        balance = data["wallets"].get(str(target.id), 0)
-        achievements = get_achievement_names(player)
-
-        embed = discord.Embed(title="🌑 DARK TRAINER", color=0x71368a)
-        embed.set_thumbnail(url=target.display_avatar.url)
-        embed.add_field(name="⚔️ Battles", value=str(player["wins"] + player["losses"]), inline=True)
-        embed.add_field(name="🏆 Wins", value=str(player["wins"]), inline=True)
-        embed.add_field(name="💀 Losses", value=str(player["losses"]), inline=True)
-        embed.add_field(name="👑 Gym Captures", value=str(player["captures"]), inline=True)
-        embed.add_field(name="🛡️ Defenses", value=str(player["defenses"]), inline=True)
-        embed.add_field(name="🔥 Win Streak", value=str(player["win_streak"]), inline=True)
-        embed.add_field(name="✨ Stardust", value=str(balance), inline=True)
-        embed.add_field(name="🏅 Achievements", value="\n".join(achievements) if achievements else "*Chưa có*", inline=False)
-        await interaction.response.send_message(embed=embed)
-
     @app_commands.command(name="dark_rank", description="Xem bảng xếp hạng Dark Gym.")
     @is_gym_channel()
     async def dark_rank(self, interaction: discord.Interaction):
