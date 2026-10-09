@@ -51,6 +51,26 @@ class GymAdmin(commands.Cog):
             embed.add_field(name="📜 Người tiền nhiệm", value=f"<@{old_owner}>", inline=False)
         await interaction.response.send_message(embed=embed)
 
+    @app_commands.command(name="xoa_bao_ho", description="[OWNER] Xóa bảo hộ của một tầng.")
+    @is_gym_channel()
+    async def xoa_bao_ho(self, interaction: discord.Interaction, tang: int):
+        if not await self.owner_only(interaction):
+            return
+        if tang not in (1, 2, 3):
+            return await interaction.response.send_message("❌ Tầng không hợp lệ! Chọn tầng 1 đến 3.", ephemeral=True)
+
+        data = load_data()
+        tier = str(tang)
+        tower = data["towers"][tier]
+        if not tower.get("protected_until"):
+            return await interaction.response.send_message(f"ℹ️ Tầng {tang} hiện không có thời gian bảo hộ được lưu.", ephemeral=True)
+
+        tower["protected_until"] = None
+        save_data(data)
+        await interaction.response.send_message(
+            f"🛡️ Owner đã xóa bảo hộ của **Tầng {tang} — {tower['title']}**. Tầng này có thể được thách đấu nếu không vướng điều kiện khác."
+        )
+
     @app_commands.command(name="thap_gym", description="Xem trạng thái 3 tầng Dark Gym.")
     @is_gym_channel()
     async def thap_gym(self, interaction: discord.Interaction):
