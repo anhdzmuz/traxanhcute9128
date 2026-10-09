@@ -16,8 +16,9 @@ def now():
     return datetime.now(TZ)
 
 
-def parse_time(value):
-    return datetime.strptime(value.strip(), "%d/%m/%Y %H:%M").replace(tzinfo=TZ)
+def parse_time(value, day):
+    parsed = datetime.strptime(value.strip(), "%H:%M")
+    return datetime.combine(day, parsed.time(), tzinfo=TZ)
 
 
 def local_time(value):
@@ -26,8 +27,8 @@ def local_time(value):
 
 
 class AvailabilityModal(discord.ui.Modal, title="Nhập lịch rảnh của Quản Tháp"):
-    start = discord.ui.TextInput(label="Bắt đầu (DD/MM/YYYY HH:MM)", placeholder="12/10/2026 20:00", max_length=16)
-    end = discord.ui.TextInput(label="Kết thúc (DD/MM/YYYY HH:MM)", placeholder="12/10/2026 22:00", max_length=16)
+    start = discord.ui.TextInput(label="Giờ bắt đầu (HH:MM)", placeholder="20:00", max_length=5)
+    end = discord.ui.TextInput(label="Giờ kết thúc (HH:MM)", placeholder="22:00", max_length=5)
 
     def __init__(self, tier):
         super().__init__(timeout=300)
@@ -39,20 +40,17 @@ class AvailabilityModal(discord.ui.Modal, title="Nhập lịch rảnh của Qu�
         if data["towers"][tier].get("user_id") != interaction.user.id:
             return await interaction.response.send_message("Chỉ Quản Tháp hiện tại mới được nhập lịch.", ephemeral=True)
         try:
-            start, end = parse_time(str(self.start.value)), parse_time(str(self.end.value))
+            current = now()
+            tomorrow = (current + timedelta(days=1)).date()
+            start, end = parse_time(str(self.start.value), tomorrow), parse_time(str(self.end.value), tomorrow)
         except ValueError:
-            return await interaction.response.send_message("Sai định dạng. Hãy nhập DD/MM/YYYY HH:MM, ví dụ 12/10/2026 20:00.", ephemeral=True)
-        current = now()
-        tomorrow = (current + timedelta(days=1)).date()
-        latest_allowed = datetime.combine(tomorrow, datetime.min.time(), tzinfo=TZ).replace(hour=23, minute=0)
-        if start <= current or end <= start:
-            return await interaction.response.send_message("Giờ bắt đầu phải ở tương lai và giờ kết thúc phải sau giờ bắt đầu.", ephemeral=True)
-        if start.date() > tomorrow or end.date() > tomorrow:
-            return await interaction.response.send_message("Chỉ được đặt lịch từ hiện tại đến hết ngày mai (giờ Việt Nam).", ephemeral=True)
-        if start.hour < 7 or (start.hour == 23 and start.minute > 0) or end.hour < 7 or end.hour > 23 or (end.hour == 23 and end.minute > 0):
+            return await interaction.response.send_message("Sai định dạng. Chỉ nhập giờ theo HH:MM, ví dụ 20:00.", ephemeral=True)
+        if start <= current:
+            return await interaction.response.send_message("Giờ bắt đầu phải ở tương lai trong ngày mai.", ephemeral=True)
+        if end <= start:
+            return await interaction.response.send_message("Giờ kết thúc phải sau giờ bắt đầu trong ngày mai.", ephemeral=True)
+        if start.hour < 7 or start.hour > 23 or (start.hour == 23 and start.minute > 0) or end.hour < 7 or end.hour > 23 or (end.hour == 23 and end.minute > 0):
             return await interaction.response.send_message("Khung giờ thách đấu chỉ được nằm trong khoảng 07:00–23:00 (giờ Việt Nam).", ephemeral=True)
-        if end > latest_allowed:
-            return await interaction.response.send_message("Lịch phải kết thúc muộn nhất lúc 23:00 ngày mai (giờ Việt Nam).", ephemeral=True)
         if tier in data.get("active_matches", {}):
             return await interaction.response.send_message("Tầng này đang có trận chưa chốt kết quả.", ephemeral=True)
         for other, session in data.get("active_registrations", {}).items():
@@ -85,7 +83,7 @@ class AvailabilityModal(discord.ui.Modal, title="Nhập lịch rảnh của Qu�
                 latest["active_registrations"][tier]["announcement_message_id"] = message.id
                 save_data(latest)
         await interaction.response.send_message(
-            f"Đã ghi nhận lịch Tầng {tier}: {start:%d/%m/%Y %H:%M}–{end:%H:%M} (giờ Việt Nam). Bot sẽ nhắc lại mỗi 30 phút đến giờ bắt đầu.",
+            f"Đã ghi nhận lịch Tầng {tier} cho ngày mai ({start:%d/%m/%Y}): {start:%H:%M}–{end:%H:%M} (giờ Việt Nam). Bot sẽ nhắc lại mỗi 30 phút đến giờ bắt đầu.",
             ephemeral=True,
         )
 
@@ -286,7 +284,7 @@ class Challenge(commands.Cog):
         save_data(data)
         try:
             manager = self.bot.get_user(int(tower["user_id"])) or await self.bot.fetch_user(int(tower["user_id"]))
-            await manager.send(f"Owner yêu cầu bạn nhập lịch rảnh cho Tầng {tier} — {tower.get('title', 'Dark Gym')}. Nhấn nút rồi nhập ngày giờ theo giờ Việt Nam.", view=AvailabilityView(tier))
+            await manager.send(f"Owner yêu cầu bạn nhập lịch rảnh cho Tầng {tier} — {tower.get('title', 'Dark Gym')}. Lịch mặc định là ngày mai; chỉ cần nhập giờ theo HH:MM (giờ Việt Nam).", view=AvailabilityView(tier))
             data = load_data()
             data["pending_challenges"][tier]["sent"] = True
             save_data(data)
