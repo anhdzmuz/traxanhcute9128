@@ -1,15 +1,16 @@
 import copy
 import json
 import os
-from datetime import datetime
 
 import discord
+import psycopg
+from psycopg.types.json import Jsonb
 from discord.ext import commands, tasks
 from discord import app_commands
 
-DATA_FILE = "gym_data.json"
-GYM_CHANNEL_ID = 1147411953501880390
 OWNER_ID = 1031799680792809522
+GYM_CHANNEL_ID = 1147411953501880390
+DATA_KEY = "dark_gym_main"
 
 DEFAULT_DATA = {
     "towers": {
@@ -21,13 +22,28 @@ DEFAULT_DATA = {
     "cooldowns": {},
     "active_registrations": {},
     "active_matches": {},
+    "pending_challenges": {},
     "players": {},
     "match_history": [],
 }
 
 
+def _database_url():
+    url = os.environ.get("DATABASE_URL", "").strip()
+    if not url:
+        raise RuntimeError(
+            "Thiếu DATABASE_URL. Hãy cấu hình biến môi trường PostgreSQL trước khi chạy bot."
+        )
+    return url
+
+
+def _connect():
+    # PostgreSQL hosted externally should use TLS.
+    return psycopg.connect(_database_url(), connect_timeout=10, sslmode="require")
+
+
 def _merge_defaults(data):
-    """Migrate older gym_data.json files without destroying existing data."""
+    """Add new schema fields without dropping existing saved game data."""
     merged = copy.deepcopy(DEFAULT_DATA)
     if isinstance(data, dict):
         for key, value in data.items():
@@ -44,7 +60,7 @@ def _merge_defaults(data):
         info.setdefault("protected_until", None)
         info.setdefault("defense_streak", 0)
 
-    for key in ("wallets", "cooldowns", "active_registrations", "active_matches", "players"):
+    for key in ("wallets", "cooldowns", "active_registrations", "active_matches", "pending_challenges", "players"):
         if not isinstance(merged.get(key), dict):
             merged[key] = {}
     if not isinstance(merged.get("match_history"), list):
@@ -52,23 +68,64 @@ def _merge_defaults(data):
     return merged
 
 
+def initialize_storage():
+    """Create the PostgreSQL table and initialize a clean state only if empty.
+
+    The old local gym_data.json is intentionally ignored. Existing database
+    data is never reset during restarts or deployments.
+    """
+    with _connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dark_gym_state (
+                state_key TEXT PRIMARY KEY,
+                payload JSONB NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO dark_gym_state (state_key, payload)
+            VALUES (%s, %s)
+            ON CONFLICT (state_key) DO NOTHING
+            """,
+            (DATA_KEY, Jsonb(copy.deepcopy(DEFAULT_DATA))),
+        )
+    print("✅ PostgreSQL storage ready; clean state is used when the database is empty.")
+
+
 def load_data():
-    if not os.path.exists(DATA_FILE):
-        data = copy.deepcopy(DEFAULT_DATA)
-        save_data(data)
-        return data
-    try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return _merge_defaults(json.load(f))
-    except (json.JSONDecodeError, OSError, TypeError):
-        return copy.deepcopy(DEFAULT_DATA)
+    """Read saved state. Fail loudly on DB problems instead of silently losing ownership."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT payload FROM dark_gym_state WHERE state_key = %s",
+            (DATA_KEY,),
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("Không tìm thấy dữ liệu Dark Gym trong PostgreSQL; từ chối tự tạo lại để tránh mất dữ liệu.")
+    data = row[0]
+    if isinstance(data, str):
+        data = json.loads(data)
+    if not isinstance(data, dict):
+        raise RuntimeError("Dữ liệu Dark Gym trong PostgreSQL không hợp lệ; từ chối ghi đè.")
+    return _merge_defaults(data)
 
 
 def save_data(data):
-    tmp_file = DATA_FILE + ".tmp"
-    with open(tmp_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
-    os.replace(tmp_file, DATA_FILE)
+    """Atomically save the full game state to PostgreSQL."""
+    if not isinstance(data, dict):
+        raise TypeError("save_data expects a dictionary")
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO dark_gym_state (state_key, payload, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (state_key)
+            DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
+            """,
+            (DATA_KEY, Jsonb(data)),
+        )
 
 
 def is_owner(user_id: int) -> bool:
@@ -107,7 +164,6 @@ def get_player(data, user_id):
 def award_achievements(data, user_id):
     player = get_player(data, user_id)
     unlocked = []
-
     checks = [
         ("first_blood", "⚔️ First Blood", player["wins"] >= 1),
         ("conqueror", "👑 Conqueror", player["captures"] >= 1),
@@ -195,10 +251,7 @@ class Core(commands.Cog):
     @is_gym_channel()
     async def dark_rank(self, interaction: discord.Interaction):
         data = load_data()
-        players = []
-        for uid, player in data["players"].items():
-            players.append((int(uid), player))
-
+        players = [(int(uid), player) for uid, player in data["players"].items()]
         wins = sorted(players, key=lambda x: (x[1].get("wins", 0), x[1].get("best_win_streak", 0)), reverse=True)[:5]
         captures = sorted(players, key=lambda x: x[1].get("captures", 0), reverse=True)[:5]
         defenses = sorted(players, key=lambda x: x[1].get("defenses", 0), reverse=True)[:5]
@@ -206,10 +259,7 @@ class Core(commands.Cog):
         def lines(items, key):
             if not items:
                 return "*Chưa có dữ liệu*"
-            result = []
-            for i, (uid, p) in enumerate(items, 1):
-                result.append(f"**{i}.** <@{uid}> — `{p.get(key, 0)}`")
-            return "\n".join(result)
+            return "\n".join(f"**{i}.** <@{uid}> — `{p.get(key, 0)}`" for i, (uid, p) in enumerate(items, 1))
 
         embed = discord.Embed(title="🌑 DARK GYM RANKING", color=0x2f3136)
         embed.add_field(name="🏆 Most Wins", value=lines(wins, "wins"), inline=False)
