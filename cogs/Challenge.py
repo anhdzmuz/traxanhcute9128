@@ -42,8 +42,17 @@ class AvailabilityModal(discord.ui.Modal, title="Nhập lịch rảnh của Qu�
             start, end = parse_time(str(self.start.value)), parse_time(str(self.end.value))
         except ValueError:
             return await interaction.response.send_message("Sai định dạng. Hãy nhập DD/MM/YYYY HH:MM, ví dụ 12/10/2026 20:00.", ephemeral=True)
-        if start <= now() or end <= start:
+        current = now()
+        tomorrow = (current + timedelta(days=1)).date()
+        latest_allowed = datetime.combine(tomorrow, datetime.min.time(), tzinfo=TZ).replace(hour=23, minute=0)
+        if start <= current or end <= start:
             return await interaction.response.send_message("Giờ bắt đầu phải ở tương lai và giờ kết thúc phải sau giờ bắt đầu.", ephemeral=True)
+        if start.date() > tomorrow or end.date() > tomorrow:
+            return await interaction.response.send_message("Chỉ được đặt lịch từ hiện tại đến hết ngày mai (giờ Việt Nam).", ephemeral=True)
+        if start.hour < 7 or (start.hour == 23 and start.minute > 0) or end.hour < 7 or end.hour > 23 or (end.hour == 23 and end.minute > 0):
+            return await interaction.response.send_message("Khung giờ thách đấu chỉ được nằm trong khoảng 07:00–23:00 (giờ Việt Nam).", ephemeral=True)
+        if end > latest_allowed:
+            return await interaction.response.send_message("Lịch phải kết thúc muộn nhất lúc 23:00 ngày mai (giờ Việt Nam).", ephemeral=True)
         if tier in data.get("active_matches", {}):
             return await interaction.response.send_message("Tầng này đang có trận chưa chốt kết quả.", ephemeral=True)
         for other, session in data.get("active_registrations", {}).items():
