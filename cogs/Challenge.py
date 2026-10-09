@@ -147,7 +147,7 @@ async def post_announcement(channel, tier, session, data=None):
     embed.add_field(name="Bắt đầu", value=f"<t:{int(start.timestamp())}:F> (<t:{int(start.timestamp())}:R>)", inline=False)
     embed.add_field(name="Ứng viên hiện tại", value=str(len(session.get("challengers", []))), inline=False)
     embed.add_field(name="Teambuilding", value=get_teambuilding_text(), inline=False)
-    return await channel.send(content=f"Lịch thách đấu mới tại Tầng {tier}! <@{session['owner_id']}>", embed=embed, view=RegistrationView(tier))
+    return await channel.send(content=f"Lịch thách đấu mới tại Tầng {tier}!", embed=embed, view=RegistrationView(tier))
 
 
 class Challenge(commands.Cog):
@@ -241,7 +241,7 @@ class Challenge(commands.Cog):
                 embed.add_field(name="Người thách đấu", value=f"<@{selected}>", inline=True)
                 embed.add_field(name="Khung giờ đã xác nhận", value=f"{start:%d/%m/%Y %H:%M} – {end:%d/%m/%Y %H:%M} giờ Việt Nam", inline=False)
                 embed.add_field(name="Teambuilding", value=get_teambuilding_text(), inline=False)
-                await channel.send(content=f"Chúc mừng <@{selected}>! Bạn được chọn thi đấu với <@{owner_id}>.", embed=embed)
+                await channel.send(content="Đã chọn xong người thách đấu ngẫu nhiên. Vui lòng xem thông tin trong thông báo bên dưới.", embed=embed)
 
         if changed:
             save_data(data)
