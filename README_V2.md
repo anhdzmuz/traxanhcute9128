@@ -26,8 +26,8 @@ Các lệnh quản lý Gym không còn yêu cầu quyền Administrator của Di
 - `/tran_dang_dien_ra` — các trận đang chờ chốt.
 - Defense Streak cho từng Gym.
 - Achievement: First Blood, Conqueror, Guardian, Dark Master, Unstoppable, Eclipse.
-- Tự động migrate `gym_data.json` cũ sang schema mới.
-- Ghi dữ liệu JSON theo kiểu atomic để giảm nguy cơ file bị hỏng khi ghi.
+- Lưu dữ liệu bằng PostgreSQL (bảng `dark_gym_state`), không reset khi restart hoặc deploy.
+- Tự bổ sung các trường schema mới mà không làm mất dữ liệu cũ.
 
 ## Command chính
 
@@ -51,5 +51,8 @@ Các lệnh quản lý Gym không còn yêu cầu quyền Administrator của Di
 ## Lưu ý
 
 - Bot cần được cấp quyền gửi message/embed trong `GYM_CHANNEL_ID`.
-- Token vẫn lấy từ biến môi trường `DISCORD_TOKEN`.
-- `gym_data.json` được tạo tự động khi bot chạy lần đầu.
+- Biến môi trường bắt buộc:
+  - `DISCORD_TOKEN`: token của bot.
+  - `DATABASE_URL`: chuỗi kết nối PostgreSQL (bắt buộc TLS).
+- Biến tùy chọn: `PORT` (mặc định `8080`, dùng cho health check của Render).
+- File `gym_data.json` cũ không còn được dùng và bị bỏ qua.
