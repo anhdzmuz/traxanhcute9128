@@ -73,9 +73,9 @@ def build_announcement_embed(tier, title, session):
     return embed
 
 
-async def post_announcement(channel, tier, title, session, reminder=False):
+async def post_announcement(channel, tier, title, session):
     return await channel.send(
-        content=gl.announcement_text(tier, session, reminder=reminder),
+        content=gl.announcement_text(tier, session),
         embed=build_announcement_embed(tier, title, session),
         view=RegistrationView(tier),
     )
@@ -291,7 +291,7 @@ class Challenge(commands.Cog):
             await delete_message_quietly(self.bot, channel_id, session.get("announcement_message_id"))
             try:
                 title = snapshot["towers"][tier].get("title", "Dark Gym")
-                message = await post_announcement(channel, tier, title, session, reminder=True)
+                message = await post_announcement(channel, tier, title, session)
             except discord.HTTPException:
                 log.exception("Không đăng được thông báo nhắc Tầng %s", tier)
         message_id = message.id if message else None

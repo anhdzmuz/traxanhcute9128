@@ -355,11 +355,11 @@ def test_merge_defaults_keeps_data_and_adds_new_fields():
 def test_announcement_text_always_shows_time_window():
     data = with_owner()
     session = open_registration(data, start_h=19, end_h=21)["session"]
-    new = gl.announcement_text("1", session)
-    again = gl.announcement_text("1", session, reminder=True)
-    for text in (new, again):
-        assert "19:00 – 21:00" in text and "29/10/2026" in text and "Tầng 1" in text
-    assert new.startswith("Lịch thách đấu mới") and again.startswith("⏰ Nhắc lại")
+    lines = gl.announcement_text("1", session).split("\n")
+    assert lines[0] == "Thách đấu Tầng 1"
+    assert lines[1] == "Khung giờ: 19:00 – 21:00 ngày 29/10/2026 (giờ Việt Nam)"
+    assert lines[2].startswith("Bắt đầu <t:") and lines[2].endswith(":R>")
+    assert len(lines) == 3
 
 
 def test_format_remaining():
