@@ -1,5 +1,7 @@
+import asyncio
 import copy
 import json
+import logging
 import os
 
 import discord
@@ -8,25 +10,18 @@ from psycopg.types.json import Jsonb
 from discord.ext import commands, tasks
 from discord import app_commands
 
+import gym_logic as gl
+
+log = logging.getLogger(__name__)
+
 OWNER_ID = 1031799680792809522
 GYM_CHANNEL_ID = 1147411953501880390
 DATA_KEY = "dark_gym_main"
 
-DEFAULT_DATA = {
-    "towers": {
-        "1": {"title": "Antumbra Overlord", "user_id": None, "protected_until": None, "defense_streak": 0},
-        "2": {"title": "Umbra Weaver", "user_id": None, "protected_until": None, "defense_streak": 0},
-        "3": {"title": "Penumbra Sentinel", "user_id": None, "protected_until": None, "defense_streak": 0},
-    },
-    "wallets": {},
-    "cooldowns": {},
-    "active_registrations": {},
-    "active_matches": {},
-    "pending_challenges": {},
-    "players": {},
-    "match_history": [],
-}
 
+# --------------------------------------------------------------------------- #
+# Lưu trữ PostgreSQL
+# --------------------------------------------------------------------------- #
 
 def _database_url():
     url = os.environ.get("DATABASE_URL", "").strip()
@@ -40,32 +35,6 @@ def _database_url():
 def _connect():
     # PostgreSQL hosted externally should use TLS.
     return psycopg.connect(_database_url(), connect_timeout=10, sslmode="require")
-
-
-def _merge_defaults(data):
-    """Add new schema fields without dropping existing saved game data."""
-    merged = copy.deepcopy(DEFAULT_DATA)
-    if isinstance(data, dict):
-        for key, value in data.items():
-            if key == "towers" and isinstance(value, dict):
-                for tier, info in value.items():
-                    if tier in merged["towers"] and isinstance(info, dict):
-                        merged["towers"][tier].update(info)
-            else:
-                merged[key] = value
-
-    for tier, info in merged["towers"].items():
-        info.setdefault("title", DEFAULT_DATA["towers"][tier]["title"])
-        info.setdefault("user_id", None)
-        info.setdefault("protected_until", None)
-        info.setdefault("defense_streak", 0)
-
-    for key in ("wallets", "cooldowns", "active_registrations", "active_matches", "pending_challenges", "players"):
-        if not isinstance(merged.get(key), dict):
-            merged[key] = {}
-    if not isinstance(merged.get("match_history"), list):
-        merged["match_history"] = []
-    return merged
 
 
 def initialize_storage():
@@ -90,18 +59,13 @@ def initialize_storage():
             VALUES (%s, %s)
             ON CONFLICT (state_key) DO NOTHING
             """,
-            (DATA_KEY, Jsonb(copy.deepcopy(DEFAULT_DATA))),
+            (DATA_KEY, Jsonb(copy.deepcopy(gl.DEFAULT_DATA))),
         )
     print("✅ PostgreSQL storage ready; clean state is used when the database is empty.")
 
 
-def load_data():
-    """Read saved state. Fail loudly on DB problems instead of silently losing ownership."""
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT payload FROM dark_gym_state WHERE state_key = %s",
-            (DATA_KEY,),
-        ).fetchone()
+def _decode_row(row):
+    """Giải mã payload; báo lỗi rõ ràng thay vì âm thầm làm mất quyền sở hữu."""
     if row is None:
         raise RuntimeError("Không tìm thấy dữ liệu Dark Gym trong PostgreSQL; từ chối tự tạo lại để tránh mất dữ liệu.")
     data = row[0]
@@ -109,24 +73,56 @@ def load_data():
         data = json.loads(data)
     if not isinstance(data, dict):
         raise RuntimeError("Dữ liệu Dark Gym trong PostgreSQL không hợp lệ; từ chối ghi đè.")
-    return _merge_defaults(data)
+    return gl.merge_defaults(data)
 
 
-def save_data(data):
-    """Atomically save the full game state to PostgreSQL."""
-    if not isinstance(data, dict):
-        raise TypeError("save_data expects a dictionary")
+def load_data():
+    """Đọc trạng thái (chỉ đọc). Hàm đồng bộ — trong code async hãy dùng `read_data()`."""
     with _connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO dark_gym_state (state_key, payload, updated_at)
-            VALUES (%s, %s, NOW())
-            ON CONFLICT (state_key)
-            DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
-            """,
-            (DATA_KEY, Jsonb(data)),
-        )
+        row = conn.execute(
+            "SELECT payload FROM dark_gym_state WHERE state_key = %s",
+            (DATA_KEY,),
+        ).fetchone()
+    return _decode_row(row)
 
+
+def _update_sync(fn):
+    with _connect() as conn:
+        # FOR UPDATE: các thao tác ghi khác phải chờ, nên không còn mất dữ liệu do ghi đè nhau.
+        row = conn.execute(
+            "SELECT payload FROM dark_gym_state WHERE state_key = %s FOR UPDATE",
+            (DATA_KEY,),
+        ).fetchone()
+        data = _decode_row(row)
+        before = copy.deepcopy(data)
+        result = fn(data)
+        if data != before:
+            conn.execute(
+                "UPDATE dark_gym_state SET payload = %s, updated_at = NOW() WHERE state_key = %s",
+                (Jsonb(data), DATA_KEY),
+            )
+    return result
+
+
+async def read_data():
+    """Đọc trạng thái mà không chặn event loop."""
+    return await asyncio.to_thread(load_data)
+
+
+async def update_data(fn):
+    """Đọc – sửa – ghi nguyên tử.
+
+    `fn(data)` chạy trong một transaction có khóa dòng; nó sửa trực tiếp `data`
+    và trả về kết quả bất kỳ. `fn` phải đồng bộ, nhanh và KHÔNG gọi Discord:
+    hãy trả về thông tin cần thiết rồi gửi tin nhắn sau khi `update_data` kết thúc.
+    Nếu `fn` ném lỗi, transaction được rollback và không có gì được ghi.
+    """
+    return await asyncio.to_thread(_update_sync, fn)
+
+
+# --------------------------------------------------------------------------- #
+# Tiện ích dùng chung cho các cog
+# --------------------------------------------------------------------------- #
 
 def is_owner(user_id: int) -> bool:
     return user_id == OWNER_ID
@@ -138,101 +134,36 @@ def is_gym_channel():
     return app_commands.check(predicate)
 
 
-def get_player(data, user_id):
-    key = str(user_id)
-    player = data["players"].setdefault(key, {
-        "wins": 0,
-        "losses": 0,
-        "captures": 0,
-        "defenses": 0,
-        "win_streak": 0,
-        "best_win_streak": 0,
-        "towers_captured": [],
-        "achievements": [],
-    })
-    player.setdefault("wins", 0)
-    player.setdefault("losses", 0)
-    player.setdefault("captures", 0)
-    player.setdefault("defenses", 0)
-    player.setdefault("win_streak", 0)
-    player.setdefault("best_win_streak", 0)
-    player.setdefault("towers_captured", [])
-    player.setdefault("achievements", [])
-    return player
+async def fail_deferred(interaction: discord.Interaction, text: str):
+    """Thay tin "đang suy nghĩ" công khai bằng một thông báo lỗi chỉ người dùng thấy."""
+    try:
+        await interaction.delete_original_response()
+    except discord.HTTPException:
+        pass
+    await interaction.followup.send(text, ephemeral=True)
 
 
-def award_achievements(data, user_id):
-    player = get_player(data, user_id)
-    unlocked = []
-    checks = [
-        ("first_blood", "⚔️ First Blood", player["wins"] >= 1),
-        ("conqueror", "👑 Conqueror", player["captures"] >= 1),
-        ("guardian", "🛡️ Guardian", player["defenses"] >= 5),
-        ("dark_master", "🌑 Dark Master", player["wins"] >= 20),
-        ("unstoppable", "🔥 Unstoppable", player["best_win_streak"] >= 5),
-        ("eclipse", "🌘 Eclipse", len(set(player["towers_captured"])) >= 3),
-    ]
-    for code, name, condition in checks:
-        if condition and code not in player["achievements"]:
-            player["achievements"].append(code)
-            unlocked.append(name)
-    return unlocked
-
-
-def get_achievement_names(player):
-    names = {
-        "first_blood": "⚔️ First Blood",
-        "conqueror": "👑 Conqueror",
-        "guardian": "🛡️ Guardian",
-        "dark_master": "🌑 Dark Master",
-        "unstoppable": "🔥 Unstoppable",
-        "eclipse": "🌘 Eclipse",
-    }
-    return [names[x] for x in player.get("achievements", []) if x in names]
-
-
-def get_teambuilding_text():
-    return (
-        "⚠️ **LƯU Ý QUY ĐỊNH TEAMBUILDING:**\n"
-        "• **Core Hệ Dark:** Cả Quản tháp & Người thách đấu bắt buộc mang tối thiểu **3/6 Pokémon** hệ Dark.\n"
-        "• **Hybrid Team Sheet:**\n"
-        "  ➔ Chỉ công khai (Move, Nature, Item, Gender) của **4/6 Pokémon** trong đội.\n"
-        "  ➔ **2 Pokémon còn lại** sẽ được giấu kín hoàn toàn mọi thông tin trên."
-    )
-
-
-def format_remaining(target):
-    seconds = max(0, int(target.total_seconds()))
-    days, rem = divmod(seconds, 86400)
-    hours, rem = divmod(rem, 3600)
-    minutes, _ = divmod(rem, 60)
-    if days:
-        return f"{days} ngày {hours} giờ"
-    if hours:
-        return f"{hours} giờ {minutes} phút"
-    return f"{minutes} phút"
-
+# --------------------------------------------------------------------------- #
+# Cog
+# --------------------------------------------------------------------------- #
 
 class Core(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    async def cog_load(self):
         self.reward_stardust_loop.start()
 
     def cog_unload(self):
         self.reward_stardust_loop.cancel()
 
-    @tasks.loop(hours=3)
+    @tasks.loop(minutes=5)
     async def reward_stardust_loop(self):
-        data = load_data()
-        updated = False
-        for info in data["towers"].values():
-            user_id = info.get("user_id")
-            if user_id:
-                key = str(user_id)
-                data["wallets"][key] = data["wallets"].get(key, 0) + 10
-                updated = True
-        if updated:
-            save_data(data)
+        # Một lỗi DB thoáng qua không được phép làm vòng lặp dừng hẳn.
+        try:
+            await update_data(lambda data: gl.apply_stardust(data, gl.now()))
+        except Exception:
+            log.exception("Lỗi khi cộng Dark Stardust định kỳ")
 
     @reward_stardust_loop.before_loop
     async def before_reward_loop(self):
@@ -241,16 +172,18 @@ class Core(commands.Cog):
     @app_commands.command(name="stardust_altar", description="Xem số dư Dark Stardust.")
     @is_gym_channel()
     async def stardust_altar(self, interaction: discord.Interaction):
-        data = load_data()
+        await interaction.response.defer()
+        data = await read_data()
         balance = data["wallets"].get(str(interaction.user.id), 0)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"🔮 **DARK STARDUST ALTAR**\n\n👤 {interaction.user.mention}\n✨ Số dư: **{balance} Dark Stardust**"
         )
 
     @app_commands.command(name="dark_rank", description="Xem bảng xếp hạng Dark Gym.")
     @is_gym_channel()
     async def dark_rank(self, interaction: discord.Interaction):
-        data = load_data()
+        await interaction.response.defer()
+        data = await read_data()
         players = [(int(uid), player) for uid, player in data["players"].items()]
         wins = sorted(players, key=lambda x: (x[1].get("wins", 0), x[1].get("best_win_streak", 0)), reverse=True)[:5]
         captures = sorted(players, key=lambda x: x[1].get("captures", 0), reverse=True)[:5]
@@ -265,12 +198,13 @@ class Core(commands.Cog):
         embed.add_field(name="🏆 Most Wins", value=lines(wins, "wins"), inline=False)
         embed.add_field(name="👑 Gym Captures", value=lines(captures, "captures"), inline=False)
         embed.add_field(name="🛡️ Best Defenders", value=lines(defenses, "defenses"), inline=False)
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="lich_su", description="Xem lịch sử các trận Dark Gym.")
     @is_gym_channel()
     async def lich_su(self, interaction: discord.Interaction, member: discord.User | None = None):
-        data = load_data()
+        await interaction.response.defer()
+        data = await read_data()
         history = data["match_history"]
         if member:
             history = [m for m in history if m.get("challenger_id") == member.id or m.get("owner_id") == member.id]
@@ -287,13 +221,13 @@ class Core(commands.Cog):
                     value=f"⚔️ <@{match['challenger_id']}> vs <@{match['owner_id']}>\n{result}\n📅 `{match['ended_at']}`",
                     inline=False,
                 )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="teambuilding", description="Xem quy định về cách xây dựng đội hình thi đấu.")
     @is_gym_channel()
     async def teambuilding(self, interaction: discord.Interaction):
         embed = discord.Embed(title="📝 QUY ĐỊNH TEAMBUILDING - THÁNH ĐỊA BÓNG ĐÊM", color=0x71368a)
-        embed.description = get_teambuilding_text()
+        embed.description = gl.get_teambuilding_text()
         await interaction.response.send_message(embed=embed)
 
 
