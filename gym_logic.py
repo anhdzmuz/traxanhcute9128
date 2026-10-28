@@ -346,6 +346,17 @@ def toggle_registration(data, tier, user_id, current):
     }
 
 
+def announcement_text(tier, session, reminder=False):
+    """Nội dung chữ của tin thông báo (hiện cả trong thông báo đẩy), luôn kèm khung giờ."""
+    start, end = parse_dt(session["start_at"]), parse_dt(session["end_at"])
+    head = f"⏰ Nhắc lại: thách đấu Tầng {tier}" if reminder else f"Lịch thách đấu mới tại Tầng {tier}!"
+    return (
+        f"{head}\n"
+        f"🕗 Khung giờ: **{start:%H:%M} – {end:%H:%M}** ngày {start:%d/%m/%Y} (giờ Việt Nam)\n"
+        f"⏳ Bắt đầu <t:{int(start.timestamp())}:R>"
+    )
+
+
 def next_match_id(data):
     ids = [int(x["match_id"]) for x in data["match_history"] if str(x.get("match_id", "")).isdigit()]
     ids += [int(x["match_id"]) for x in data["active_matches"].values() if str(x.get("match_id", "")).isdigit()]
