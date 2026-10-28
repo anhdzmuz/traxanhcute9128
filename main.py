@@ -1,10 +1,15 @@
-import discord
-from discord.ext import commands
+import logging
 import os
-from flask import Flask
 from threading import Thread
 
-from cogs.core import initialize_storage
+import discord
+from discord import app_commands
+from discord.ext import commands
+from flask import Flask
+
+from cogs.core import GYM_CHANNEL_ID, initialize_storage
+
+log = logging.getLogger(__name__)
 
 # Web endpoint used by Render health checks.
 app = Flask(__name__)
@@ -24,23 +29,39 @@ def keep_alive():
     Thread(target=run_web, daemon=True).start()
 
 
+# Bot chỉ dùng slash command nên không cần Message Content intent (đặc quyền).
 intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="/", intents=intents)
+bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
+
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CheckFailure):
+        text = f"Lệnh này chỉ dùng được trong kênh <#{GYM_CHANNEL_ID}>."
+    else:
+        command = interaction.command.qualified_name if interaction.command else "?"
+        log.error("Lỗi khi chạy lệnh /%s", command, exc_info=error)
+        text = "Có lỗi xảy ra khi xử lý lệnh. Hãy thử lại sau."
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(text, ephemeral=True)
+        else:
+            await interaction.response.send_message(text, ephemeral=True)
+    except discord.HTTPException:
+        pass
 
 
 async def load_extensions():
     if not os.path.exists("./cogs"):
         raise RuntimeError("Không tìm thấy thư mục ./cogs.")
-    for filename in os.listdir("./cogs"):
+    for filename in sorted(os.listdir("./cogs")):
         if filename.endswith(".py"):
             try:
                 await bot.load_extension(f"cogs.{filename[:-3]}")
                 print(f"➔ Đã tải tính năng: {filename}")
             except Exception:
                 # Extension failures should be visible in Render logs.
-                import logging
-                logging.exception("Không thể tải extension %s", filename)
+                log.exception("Không thể tải extension %s", filename)
                 raise
 
 
@@ -51,11 +72,11 @@ async def on_ready():
         synced = await bot.tree.sync()
         print(f"🎉 Đã đồng bộ thành công {len(synced)} lệnh Slash Commands.")
     except Exception:
-        import logging
-        logging.exception("Lỗi đồng bộ slash commands")
+        log.exception("Lỗi đồng bộ slash commands")
 
 
 async def main():
+    discord.utils.setup_logging()
     keep_alive()
     # Validate DATABASE_URL and initialize the clean state before loading cogs.
     initialize_storage()
