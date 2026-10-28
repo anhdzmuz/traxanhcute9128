@@ -352,6 +352,16 @@ def test_merge_defaults_keeps_data_and_adds_new_fields():
     assert "stardust_last_tick" in merged and set(merged["towers"]) == {"1", "2", "3"}
 
 
+def test_announcement_text_always_shows_time_window():
+    data = with_owner()
+    session = open_registration(data, start_h=19, end_h=21)["session"]
+    new = gl.announcement_text("1", session)
+    again = gl.announcement_text("1", session, reminder=True)
+    for text in (new, again):
+        assert "19:00 – 21:00" in text and "29/10/2026" in text and "Tầng 1" in text
+    assert new.startswith("Lịch thách đấu mới") and again.startswith("⏰ Nhắc lại")
+
+
 def test_format_remaining():
     assert gl.format_remaining(timedelta(days=2, hours=3)) == "2 ngày 3 giờ"
     assert gl.format_remaining(timedelta(hours=1, minutes=5)) == "1 giờ 5 phút"
