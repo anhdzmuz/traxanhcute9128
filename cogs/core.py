@@ -35,6 +35,23 @@ def _database_url():
 
 _pool = None
 
+STATEMENT_TIMEOUT_MS = int(os.environ.get("DB_STATEMENT_TIMEOUT_MS", "5000"))
+
+
+def _configure_connection(conn):
+    """Đặt statement_timeout SAU khi kết nối, không qua startup packet.
+
+    Neon chạy PgBouncer ở cổng pooler và từ chối tham số ``options`` trong
+    startup packet ("unsupported startup parameter in options: statement_timeout"),
+    làm mọi lần kết nối thất bại. ``SET`` lúc runtime có tác dụng tương đương
+    nhưng đi qua giao thức thường nên pooler chấp nhận.
+    """
+    if STATEMENT_TIMEOUT_MS > 0:
+        conn.execute(f"SET statement_timeout = {STATEMENT_TIMEOUT_MS}")
+        # SET nằm trong transaction; phải commit nếu không pool sẽ rollback
+        # khi trả kết nối về và cấu hình bị mất.
+        conn.commit()
+
 
 def get_pool():
     """Pool kết nối dùng chung.
@@ -55,9 +72,8 @@ def get_pool():
                 "connect_timeout": 10,
                 # PostgreSQL hosted externally should use TLS.
                 "sslmode": "require",
-                # Một truy vấn treo không được phép giữ khóa dòng mãi mãi.
-                "options": "-c statement_timeout=5000",
             },
+            configure=_configure_connection,
             open=True,
             name="dark-gym",
         )
@@ -68,31 +84,45 @@ def _connect():
     return get_pool().connection()
 
 
-def initialize_storage():
+def initialize_storage(attempts=5, delay=3.0):
     """Create the PostgreSQL table and initialize a clean state only if empty.
 
     The old local gym_data.json is intentionally ignored. Existing database
     data is never reset during restarts or deployments.
+
+    Có thử lại vài lần: Neon free tier ngủ đông sau một thời gian không dùng, lần
+    kết nối đầu tiên có thể chậm hoặc lỗi tạm thời. Không có retry thì bot chết
+    ngay lúc khởi động và người dùng chỉ thấy "ứng dụng không phản hồi".
     """
-    with _connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS dark_gym_state (
-                state_key TEXT PRIMARY KEY,
-                payload JSONB NOT NULL,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-            """
-        )
-        conn.execute(
-            """
-            INSERT INTO dark_gym_state (state_key, payload)
-            VALUES (%s, %s)
-            ON CONFLICT (state_key) DO NOTHING
-            """,
-            (DATA_KEY, Jsonb(copy.deepcopy(gl.DEFAULT_DATA))),
-        )
-    print("✅ PostgreSQL storage ready; clean state is used when the database is empty.")
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            with _connect() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS dark_gym_state (
+                        state_key TEXT PRIMARY KEY,
+                        payload JSONB NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO dark_gym_state (state_key, payload)
+                    VALUES (%s, %s)
+                    ON CONFLICT (state_key) DO NOTHING
+                    """,
+                    (DATA_KEY, Jsonb(copy.deepcopy(gl.DEFAULT_DATA))),
+                )
+            print("✅ PostgreSQL storage ready; clean state is used when the database is empty.")
+            return
+        except Exception as exc:  # psycopg lỗi mạng/DB đều cần thử lại
+            last_error = exc
+            print(f"⚠️ Không kết nối được PostgreSQL (lần {attempt}/{attempts}): {exc}")
+            if attempt < attempts:
+                time.sleep(delay)
+    raise RuntimeError("Không khởi tạo được PostgreSQL storage sau nhiều lần thử.") from last_error
 
 
 def _decode_row(row):

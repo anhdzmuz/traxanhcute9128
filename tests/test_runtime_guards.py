@@ -74,6 +74,42 @@ def test_click_cooldown_blocks_repeat_clicks():
     assert challenge._click_allowed(user) is True
 
 
+def test_pool_keeps_statement_timeout_out_of_startup_packet(monkeypatch):
+    """Neon pooler (PgBouncer) từ chối statement_timeout trong `options`."""
+    captured = {}
+
+    class FakePool:
+        def __init__(self, conninfo, **kwargs):
+            captured["conninfo"] = conninfo
+            captured.update(kwargs)
+
+    monkeypatch.setattr(core, "ConnectionPool", FakePool)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@host/db")
+    monkeypatch.setattr(core, "_pool", None)
+
+    core.get_pool()
+
+    assert "options" not in captured["kwargs"], "options bị Neon pooler từ chối"
+    assert captured["configure"] is core._configure_connection
+
+
+def test_configure_connection_sets_timeout_and_commits(monkeypatch):
+    calls = []
+
+    class FakeConn:
+        def execute(self, query):
+            calls.append(query)
+
+        def commit(self):
+            calls.append("COMMIT")
+
+    monkeypatch.setattr(core, "STATEMENT_TIMEOUT_MS", 5000)
+    core._configure_connection(FakeConn())
+
+    assert calls[0] == "SET statement_timeout = 5000"
+    assert calls[-1] == "COMMIT", "SET phải được commit trước khi trả kết nối về pool"
+
+
 def test_click_cooldown_prunes_old_entries():
     moment = time.monotonic()
     for uid in range(5100):
