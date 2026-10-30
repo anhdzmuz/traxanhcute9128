@@ -11,11 +11,15 @@ bot chỉ ghi nhận kết quả và lịch sử trận.
 
 | Thời điểm | Việc xảy ra |
 |---|---|
-| Thứ 2 00:00 | Mở đăng ký **cả tuần** + nút "Đăng ký / Hủy đăng ký" (tin nhắn im lặng) |
+| Thứ 2 00:00 | Mở đăng ký **cả tuần**: tin `Đăng kí thách đấu Gym Leader - WL<n>` (im lặng) + nút đăng ký |
+| Cách 8 giờ | Bot đăng lại panel đăng ký (im lặng); bản cũ mất nút |
 | Chủ Nhật 00:00 | Bốc thăm (tin nhắn im lặng) |
 | Chủ Nhật 06:00 | Thông báo lại tình trạng tuần (im lặng) |
 | Chủ Nhật 18:00 | Ping nhắc một lần (có thông báo) |
 | Chủ Nhật 23:59:59 | Hạn chót nhận kết quả |
+| Thứ 2 00:00 tuần sau | Người thắng trận tranh chức **tự động nhậm chức Gym Leader** |
+
+Số `WL` tăng mỗi tuần (WL1, WL2, WL3, …) và chỉ reset khi chạy `/reset`.
 
 Kết quả bốc thăm:
 
@@ -23,10 +27,14 @@ Kết quả bốc thăm:
 - **1 người** → người đó thách đấu Gym Leader ngay, **BO3**.
 - **2+ người** → chọn ngẫu nhiên 2 người đánh **BO1**; người thắng thách đấu
   Gym Leader trong **BO3**.
-- Chưa có Gym Leader → người thắng (hoặc người đăng ký duy nhất) nhận chức luôn.
+- Chưa có Gym Leader → người thắng (hoặc người đăng ký duy nhất) nhậm chức
+  vào **00:00 thứ 2** kế tiếp.
 
 Hai người chơi **tự thương lượng thời gian thi đấu** sau khi có kết quả bốc thăm.
 Quá hạn Chủ Nhật mà chưa có kết quả → Gym Leader giữ chức và được gia hạn.
+
+Người thắng BO3 **không đổi ngay** trong Chủ Nhật: bot ghi nhận là người kế nhiệm
+và trao chức đúng **00:00 thứ 2**, để nhiệm kỳ luôn tròn tuần.
 
 ### Chat riêng của từng trận
 
@@ -59,6 +67,8 @@ Người đăng ký mà không được bốc trúng sẽ được **+1 ưu tiê
 - `/ket_qua nguoi_thang:@X` — chốt người thắng trận đang diễn ra (BO1 hoặc BO3).
 - `/gan_leader member:@X` — gán Gym Leader thủ công cho tuần sau.
 - `/huy_tuan` — hủy tuần hiện tại, gia hạn Leader.
+- `/tao_dang_ky` — đăng lại tin đăng ký ngay (khi bot tắt đúng lúc mở tuần, hoặc muốn đẩy tin lên).
+- `/reset` — **xóa toàn bộ dữ liệu bot**, xác nhận 2 lần (dùng để test). Sau khi reset, tuần mới WL1 tự mở trong ít phút.
 
 ## Cấu hình
 
