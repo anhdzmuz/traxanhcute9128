@@ -428,3 +428,153 @@ def test_week_summary_shows_current_phase():
     summary = ml.week_summary(state, SUNDAY_DRAW)
     assert "Đang đánh BO1" in summary
     assert f"<@{PLAYER_A}>" in summary
+
+
+# --------------------------------------------------------------------------- #
+# Nộp – xác nhận kết quả trong chat riêng
+# --------------------------------------------------------------------------- #
+
+PROOF = {"message_id": 11, "channel_id": 22, "url": "https://discord.com/x", "filename": "a.png"}
+
+
+def qualifier_state():
+    state = open_week([PLAYER_A, PLAYER_B])
+    ml.ensure_week(state, SUNDAY_DRAW, rng=FirstChoiceRng())
+    assert state["week"]["phase"] == "qualifier"
+    return state
+
+
+def test_parse_score_valid_and_invalid():
+    assert ml.parse_score("1-0", 1) == (1, 0)
+    assert ml.parse_score(" 0 : 1 ", 1) == (0, 1)
+    assert ml.parse_score("2-1", 3) == (2, 1)
+    assert ml.parse_score("1-2", 3) == (1, 2)
+
+    assert ml.parse_score("2-1", 1) is None, "BO1 không thể có tỷ số 2-1"
+    assert ml.parse_score("1-0", 3) is None, "BO3 phải đủ 2 game thắng"
+    assert ml.parse_score("thắng", 3) is None
+    assert ml.parse_score("", 3) is None
+
+
+def test_submit_derives_winner_from_submitter_view():
+    state = qualifier_state()
+
+    status, payload = ml.submit_result(state, PLAYER_A, "1-0", PROOF, SUNDAY_DRAW)
+    assert status == "ok"
+    assert payload["winner_id"] == PLAYER_A
+    assert payload["opponent_id"] == PLAYER_B
+    assert state["week"]["submissions"]["qualifier"][str(PLAYER_A)]["status"] == "pending"
+
+    # B nộp tỷ số theo góc nhìn của B: 0-1 nghĩa là B thua.
+    state = qualifier_state()
+    status, payload = ml.submit_result(state, PLAYER_B, "0-1", PROOF, SUNDAY_DRAW)
+    assert status == "ok"
+    assert payload["winner_id"] == PLAYER_A
+
+
+def test_submit_rejects_outsider_bad_score_and_wrong_phase():
+    state = qualifier_state()
+    assert ml.submit_result(state, PLAYER_C, "1-0", PROOF, SUNDAY_DRAW)[0] == "not_in_match"
+    assert ml.submit_result(state, PLAYER_A, "3-0", PROOF, SUNDAY_DRAW)[0] == "bad_score"
+
+    state["week"]["phase"] = "open"
+    assert ml.submit_result(state, PLAYER_A, "1-0", PROOF, SUNDAY_DRAW)[0] == "phase"
+
+
+def test_submit_twice_overwrites_until_confirmed():
+    state = qualifier_state()
+    ml.submit_result(state, PLAYER_A, "1-0", PROOF, SUNDAY_DRAW)
+    ml.submit_result(state, PLAYER_A, "0-1", PROOF, SUNDAY_DRAW)
+    assert state["week"]["submissions"]["qualifier"][str(PLAYER_A)]["score"] == "0-1"
+
+    state["week"]["submissions"]["qualifier"][str(PLAYER_A)]["status"] = "confirmed"
+    assert ml.submit_result(state, PLAYER_A, "1-0", PROOF, SUNDAY_DRAW)[0] == "already"
+
+
+def test_confirm_qualifier_moves_to_title():
+    state = qualifier_state()
+    ml.submit_result(state, PLAYER_A, "1-0", PROOF, SUNDAY_DRAW)
+
+    status, payload = ml.confirm_result(state, PLAYER_A, SUNDAY_DRAW)
+
+    assert status == "ok"
+    assert payload["winner_id"] == PLAYER_A
+    assert state["week"]["phase"] == "title"
+    assert state["week"]["title"]["challenger_id"] == PLAYER_A
+    assert state["week"]["submissions"]["qualifier"][str(PLAYER_A)]["status"] == "confirmed"
+    assert state["players"][str(PLAYER_A)]["wins"] == 1
+
+
+def test_confirm_title_changes_leader():
+    state = open_week([PLAYER_A])
+    _to_title(state)
+    ml.submit_result(state, PLAYER_A, "2-1", PROOF, SUNDAY_END)
+
+    status, payload = ml.confirm_result(state, PLAYER_A, SUNDAY_END)
+
+    assert status == "ok"
+    assert payload["result"]["leader_changed"] is True
+    assert state["leader"]["user_id"] == PLAYER_A
+    assert state["week"]["phase"] == "done"
+
+
+def test_confirm_without_submission():
+    state = qualifier_state()
+    assert ml.confirm_result(state, PLAYER_A, SUNDAY_DRAW)[0] == "no_submission"
+
+
+def test_dispute_then_confirm_still_works():
+    state = qualifier_state()
+    ml.submit_result(state, PLAYER_A, "1-0", PROOF, SUNDAY_DRAW)
+
+    status, payload = ml.dispute_result(state, PLAYER_A, PLAYER_B, SUNDAY_DRAW)
+    assert status == "ok"
+    assert payload["by_id"] == PLAYER_B
+    assert state["week"]["submissions"]["qualifier"][str(PLAYER_A)]["status"] == "disputed"
+
+    # Owner vẫn có thể chấp nhận biên bản sau khi bị phản đối.
+    status, payload = ml.confirm_result(state, PLAYER_A, SUNDAY_DRAW)
+    assert status == "ok"
+    assert state["week"]["phase"] == "title"
+
+
+def test_pending_submission_and_summary():
+    state = qualifier_state()
+    assert ml.pending_submission(state) is None
+
+    ml.submit_result(state, PLAYER_A, "1-0", PROOF, SUNDAY_DRAW)
+    pending = ml.pending_submission(state)
+    assert pending["submitter_id"] == PLAYER_A
+    assert pending["score"] == "1-0"
+
+    summary = ml.week_summary(state, SUNDAY_DRAW)
+    assert "Biên bản" in summary and "1-0" in summary
+
+
+def test_merge_defaults_keeps_threads_and_submissions():
+    state = qualifier_state()
+    ml.submit_result(state, PLAYER_A, "1-0", PROOF, SUNDAY_DRAW)
+    state["week"]["threads"] = {"qualifier": 999}
+
+    again = ml.merge_defaults(state)
+
+    assert again["week"]["threads"]["qualifier"] == 999
+    assert again["week"]["submissions"]["qualifier"][str(PLAYER_A)]["score"] == "1-0"
+
+
+def test_merge_defaults_repairs_broken_submissions():
+    state = ml.merge_defaults(
+        {"week": {"week_id": "2026-W45", "phase": "qualifier", "submissions": [], "threads": "x"}}
+    )
+    assert state["week"]["submissions"]["qualifier"] == {}
+    assert state["week"]["threads"] == {}
+
+
+def test_rollover_carries_thread_ids_for_cleanup():
+    state = qualifier_state()
+    state["week"]["threads"] = {"qualifier": 555}
+
+    actions = ml.ensure_week(state, NEXT_MONDAY)
+
+    assert actions[0][0] == "timeout"
+    assert actions[0][1]["threads"] == [555]

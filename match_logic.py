@@ -18,6 +18,7 @@ Chu kỳ một tuần (giờ Việt Nam):
 
 import copy
 import random
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -40,6 +41,8 @@ DEFAULT_STATE = {
         "qualifier": None,
         "title": None,
         "flags": {},
+        "threads": {},       # {"qualifier": thread_id, "title": thread_id}
+        "submissions": {},   # {"qualifier": {"<user_id>": {...}}, "title": {...}}
     },
     "priority": {},
     "players": {},
@@ -155,8 +158,12 @@ def merge_defaults(data):
         for key in ("registrations", "picked"):
             if not isinstance(state["week"].get(key), list):
                 state["week"][key] = []
-        if not isinstance(state["week"].get("flags"), dict):
-            state["week"]["flags"] = {}
+        for key in ("flags", "threads", "submissions"):
+            if not isinstance(state["week"].get(key), dict):
+                state["week"][key] = {}
+        for phase in ("qualifier", "title"):
+            if not isinstance(state["week"]["submissions"].get(phase), dict):
+                state["week"]["submissions"][phase] = {}
     if state["week"].get("phase") not in ("idle", "open", "qualifier", "title", "done"):
         state["week"]["phase"] = "idle"
 
@@ -401,6 +408,159 @@ def record_title(state, winner_id, current):
 
 
 # --------------------------------------------------------------------------- #
+# Nộp – xác nhận kết quả (trong chat riêng của trận)
+# --------------------------------------------------------------------------- #
+
+SCORE_PATTERN = re.compile(r"^\s*(\d)\s*[-:]\s*(\d)\s*$")
+
+VALID_SCORES = {
+    1: {(1, 0), (0, 1)},
+    3: {(2, 0), (2, 1), (0, 2), (1, 2)},
+}
+
+
+def parse_score(text, best_of):
+    """Đọc tỷ số theo góc nhìn người nộp: "2-1" = tôi thắng 2-1.
+
+    Trả về (số_game_tôi_thắng, số_game_đối_thủ_thắng) hoặc None nếu sai định dạng
+    hoặc không phải tỷ số hợp lệ của BO1/BO3.
+    """
+    match = SCORE_PATTERN.match(text or "")
+    if not match:
+        return None
+    mine, theirs = int(match.group(1)), int(match.group(2))
+    valid = VALID_SCORES.get(best_of, set())
+    return (mine, theirs) if (mine, theirs) in valid else None
+
+
+def match_players(state):
+    """Hai người đang thi đấu ở phase hiện tại (rỗng nếu không có trận)."""
+    week = state["week"]
+    if week["phase"] == "qualifier":
+        return list((week.get("qualifier") or {}).get("players", []))
+    if week["phase"] == "title":
+        title = week.get("title") or {}
+        return [uid for uid in (title.get("challenger_id"), title.get("leader_id")) if uid]
+    return []
+
+
+def best_of_current(state):
+    return QUALIFIER_BEST_OF if state["week"]["phase"] == "qualifier" else TITLE_BEST_OF
+
+
+def get_submission(state, phase, user_id):
+    return ((state["week"].get("submissions") or {}).get(phase) or {}).get(str(user_id))
+
+
+def pending_submission(state):
+    """Biên bản đang chờ xác nhận của trận hiện tại, nếu có."""
+    phase = state["week"]["phase"]
+    if phase not in ("qualifier", "title"):
+        return None
+    for user_id, sub in ((state["week"].get("submissions") or {}).get(phase) or {}).items():
+        if isinstance(sub, dict) and sub.get("status") in ("pending", "disputed"):
+            return {"submitter_id": int(user_id), **sub}
+    return None
+
+
+def submit_result(state, user_id, score, proof, current):
+    """Ghi biên bản do một người chơi nộp. Người còn lại sẽ xác nhận."""
+    week = state["week"]
+    phase = week["phase"]
+    if phase not in ("qualifier", "title"):
+        return "phase", None
+    players = match_players(state)
+    if user_id not in players:
+        return "not_in_match", None
+
+    best_of = best_of_current(state)
+    parsed = parse_score(score, best_of)
+    if parsed is None:
+        return "bad_score", {"best_of": best_of}
+
+    mine, theirs = parsed
+    opponent = next(uid for uid in players if uid != user_id)
+    winner = user_id if mine > theirs else opponent
+
+    submissions = week.setdefault("submissions", {}).setdefault(phase, {})
+    existing = submissions.get(str(user_id))
+    if isinstance(existing, dict) and existing.get("status") == "confirmed":
+        return "already", None
+
+    submissions[str(user_id)] = {
+        "score": f"{mine}-{theirs}",
+        "winner_id": winner,
+        "opponent_id": opponent,
+        "proof": proof,
+        "at": current.isoformat(),
+        "status": "pending",
+    }
+    return "ok", {
+        "phase": phase,
+        "submitter_id": user_id,
+        "opponent_id": opponent,
+        "winner_id": winner,
+        "score": f"{mine}-{theirs}",
+        "best_of": best_of,
+    }
+
+
+def confirm_result(state, submitter_id, current):
+    """Đối thủ (hoặc owner) xác nhận biên bản → ghi kết quả thật."""
+    week = state["week"]
+    phase = week["phase"]
+    if phase not in ("qualifier", "title"):
+        return "phase", None
+    sub = get_submission(state, phase, submitter_id)
+    if not isinstance(sub, dict):
+        return "no_submission", None
+    if sub.get("status") == "confirmed":
+        return "already", None
+
+    winner = sub.get("winner_id")
+    sub["status"] = "confirmed"
+    sub["confirmed_at"] = current.isoformat()
+
+    if phase == "qualifier":
+        status, payload = record_qualifier(state, winner, current)
+    else:
+        status, payload = record_title(state, winner, current)
+    if status != "ok":
+        sub["status"] = "pending"
+        return status, None
+    return "ok", {
+        "phase": phase,
+        "submitter_id": submitter_id,
+        "winner_id": winner,
+        "score": sub.get("score"),
+        "result": payload,
+        "submission": sub,
+    }
+
+
+def dispute_result(state, submitter_id, by_id, current):
+    """Người còn lại nói kết quả không đúng → chuyển cho owner quyết định."""
+    week = state["week"]
+    phase = week["phase"]
+    if phase not in ("qualifier", "title"):
+        return "phase", None
+    sub = get_submission(state, phase, submitter_id)
+    if not isinstance(sub, dict):
+        return "no_submission", None
+    if sub.get("status") == "confirmed":
+        return "already", None
+    sub["status"] = "disputed"
+    sub["disputed_by"] = by_id
+    sub["disputed_at"] = current.isoformat()
+    return "ok", {
+        "phase": phase,
+        "submitter_id": submitter_id,
+        "by_id": by_id,
+        "score": sub.get("score"),
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Vòng lặp tuần
 # --------------------------------------------------------------------------- #
 
@@ -414,6 +574,8 @@ def _start_week(state, current):
         "qualifier": None,
         "title": None,
         "flags": {},
+        "threads": {},
+        "submissions": {},
     }
 
 
@@ -431,10 +593,13 @@ def ensure_week(state, current, rng=random):
         # Sang tuần mới. Tuần trước kết thúc dang dở (bot tắt, không ai chốt
         # kết quả) thì leader được gia hạn, rồi mở đăng ký tuần này.
         previous_message_id = week.get("message_id")
+        previous_threads = [tid for tid in (week.get("threads") or {}).values() if tid]
         if week["phase"] in ("open", "qualifier", "title"):
             extend_term(state, current)
             kind = "missed" if week["phase"] == "open" else "timeout"
-            actions.append((kind, {"week_id": week["week_id"]}))
+            actions.append(
+                (kind, {"week_id": week["week_id"], "threads": previous_threads})
+            )
         _start_week(state, current)
         payload = {"week_id": current_week}
         if previous_message_id:
@@ -462,7 +627,15 @@ def ensure_week(state, current, rng=random):
         if current > deadline_at(current):
             extend_term(state, current)
             week["phase"] = "done"
-            actions.append(("timeout", {"week_id": week["week_id"]}))
+            actions.append(
+                (
+                    "timeout",
+                    {
+                        "week_id": week["week_id"],
+                        "threads": [t for t in (week.get("threads") or {}).values() if t],
+                    },
+                )
+            )
 
     return actions
 
@@ -509,4 +682,13 @@ def week_summary(state, current):
         )
     if week["phase"] in ("qualifier", "title"):
         lines.append(f"**Hạn chót:** <t:{int(deadline_at(current).timestamp())}:R>")
+        thread_id = (week.get("threads") or {}).get(week["phase"])
+        if thread_id:
+            lines.append(f"**💬 Chat riêng:** <#{thread_id}>")
+        sub = pending_submission(state)
+        if sub:
+            label = "chờ đối thủ xác nhận" if sub.get("status") == "pending" else "đang tranh chấp"
+            lines.append(
+                f"**📤 Biên bản:** <@{sub['submitter_id']}> nộp `{sub.get('score')}` — {label}"
+            )
     return "\n".join(lines)

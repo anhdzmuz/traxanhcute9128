@@ -28,6 +28,20 @@ Kết quả bốc thăm:
 Hai người chơi **tự thương lượng thời gian thi đấu** sau khi có kết quả bốc thăm.
 Quá hạn Chủ Nhật mà chưa có kết quả → Gym Leader giữ chức và được gia hạn.
 
+### Chat riêng của từng trận
+
+Ngay sau khi bốc thăm, bot tạo một **private thread** (chỉ 2 người đấu + owner thấy):
+
+1. Hai người đánh xong, gửi **ảnh chụp màn hình** kết quả vào thread.
+2. Một người bấm **📤 Nộp kết quả** → nhập tỷ số theo góc nhìn của mình (`2-1` = tôi thắng 2-1).
+   Bot tự tìm ảnh mới nhất của người đó và ghi biên bản.
+3. Người còn lại bấm **✅ Xác nhận** (hoặc **❌ Không đúng**).
+
+Xác nhận xong → bot đăng kết quả + **ảnh minh chứng** ra kênh chính rồi **xóa thread**.
+Nếu bị báo sai, bot ping owner; owner dùng `/ket_qua` để chốt hoặc bấm ✅ để chấp nhận biên bản.
+
+Tỷ số hợp lệ: BO1 `1-0 / 0-1`, BO3 `2-0 / 2-1 / 0-2 / 1-2`.
+
 ### Ưu tiên người chưa được chọn
 
 Người đăng ký mà không được bốc trúng sẽ được **+1 ưu tiên** cho tuần sau, nên
@@ -52,15 +66,28 @@ Người đăng ký mà không được bốc trúng sẽ được **+1 ưu tiê
 |---|---|
 | `DISCORD_TOKEN` | Token bot. |
 | `DATABASE_URL` | Chuỗi kết nối Postgres (Neon). |
+| `MATCH_CHANNEL_ID` | Kênh chứa chat riêng của từng trận. Bỏ trống → dùng `GYM_CHANNEL_ID`. |
 
 `OWNER_ID` và `GYM_CHANNEL_ID` nằm trong `cogs/core.py`.
 
+## Quyền bot cần
+
+Không cần Administrator. Chỉ trên kênh trận đấu (`MATCH_CHANNEL_ID`):
+
+- `Create Private Threads` — tạo chat riêng.
+- `Send Messages in Threads` — gửi panel và thông báo.
+- `Manage Threads` — xóa chat riêng sau khi xác nhận.
+- `Read Message History` — tìm ảnh minh chứng.
+- `Attach Files` — đăng lại ảnh minh chứng ra kênh chính.
+
+Kênh chính chỉ cần `Send Messages` + `Embed Links` (+ `Attach Files` nếu muốn giữ ảnh minh chứng).
+
 ## Cấu trúc
 
-- `match_logic.py` — toàn bộ luật tuần (không import discord/psycopg, test được).
+- `match_logic.py` — toàn bộ luật tuần + nộp/xác nhận kết quả (không import discord/psycopg, test được).
 - `cogs/core.py` — pool Postgres, cache đọc, helper dùng chung.
-- `cogs/League.py` — cog Discord: vòng lặp 2 phút, nút đăng ký, slash commands.
-- `tests/` — test luật tuần và các chốt chặn tải.
+- `cogs/League.py` — cog Discord: vòng lặp 2 phút, nút đăng ký, chat riêng, slash commands.
+- `tests/` — test luật tuần, nộp/xác nhận kết quả và các chốt chặn tải.
 
 ## Kiểm thử
 

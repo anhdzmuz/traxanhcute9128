@@ -16,6 +16,15 @@ log = logging.getLogger(__name__)
 
 OWNER_ID = 1031799680792809522
 GYM_CHANNEL_ID = 1147411953501880390
+
+# Kênh chứa chat riêng của từng trận. Đặt biến môi trường MATCH_CHANNEL_ID để
+# đổi; không đặt thì dùng luôn kênh Gym.
+try:
+    MATCH_CHANNEL_ID = int(os.environ.get("MATCH_CHANNEL_ID", "0"))
+except ValueError:
+    MATCH_CHANNEL_ID = 0
+MATCH_CHANNEL_ID = MATCH_CHANNEL_ID or GYM_CHANNEL_ID
+
 DATA_KEY = "dark_gym_main"
 
 
