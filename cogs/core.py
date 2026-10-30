@@ -3,10 +3,11 @@ import copy
 import json
 import logging
 import os
+import time
 
 import discord
-import psycopg
 from psycopg.types.json import Jsonb
+from psycopg_pool import ConnectionPool
 from discord.ext import commands, tasks
 from discord import app_commands
 
@@ -32,9 +33,39 @@ def _database_url():
     return url
 
 
+_pool = None
+
+
+def get_pool():
+    """Pool kết nối dùng chung.
+
+    Trước đây mỗi lần bấm nút / chạy lệnh đều mở một kết nối TCP+TLS mới tới
+    PostgreSQL. Trên server đông người, chính chi phí bắt tay đó làm bot chậm và
+    dễ vượt giới hạn connection của nhà cung cấp DB. Pool giữ sẵn kết nối và
+    tái sử dụng chúng.
+    """
+    global _pool
+    if _pool is None:
+        _pool = ConnectionPool(
+            _database_url(),
+            min_size=1,
+            max_size=int(os.environ.get("DB_POOL_MAX", "8")),
+            timeout=15,
+            kwargs={
+                "connect_timeout": 10,
+                # PostgreSQL hosted externally should use TLS.
+                "sslmode": "require",
+                # Một truy vấn treo không được phép giữ khóa dòng mãi mãi.
+                "options": "-c statement_timeout=5000",
+            },
+            open=True,
+            name="dark-gym",
+        )
+    return _pool
+
+
 def _connect():
-    # PostgreSQL hosted externally should use TLS.
-    return psycopg.connect(_database_url(), connect_timeout=10, sslmode="require")
+    return get_pool().connection()
 
 
 def initialize_storage():
@@ -104,9 +135,30 @@ def _update_sync(fn):
     return result
 
 
-async def read_data():
-    """Đọc trạng thái mà không chặn event loop."""
-    return await asyncio.to_thread(load_data)
+_CACHE_TTL_DEFAULT = "2.5"
+CACHE_TTL = float(os.environ.get("DATA_CACHE_TTL", _CACHE_TTL_DEFAULT))
+_cache_at = 0.0
+_cache_data = None
+
+
+def _invalidate_cache():
+    global _cache_at, _cache_data
+    _cache_at, _cache_data = 0.0, None
+
+
+async def read_data(fresh: bool = False):
+    """Đọc trạng thái mà không chặn event loop.
+
+    Có cache ngắn (mặc định 2.5 giây) để nhiều người cùng xem `/thap_gym`,
+    `/dark_rank`... không tạo ra hàng loạt truy vấn giống nhau. Mọi thao tác ghi
+    đều xóa cache, nên dữ liệu hiển thị vẫn đúng ngay sau khi có thay đổi.
+    """
+    global _cache_at, _cache_data
+    if not fresh and _cache_data is not None and (time.monotonic() - _cache_at) < CACHE_TTL:
+        return copy.deepcopy(_cache_data)
+    data = await asyncio.to_thread(load_data)
+    _cache_at, _cache_data = time.monotonic(), copy.deepcopy(data)
+    return data
 
 
 async def update_data(fn):
@@ -117,7 +169,9 @@ async def update_data(fn):
     hãy trả về thông tin cần thiết rồi gửi tin nhắn sau khi `update_data` kết thúc.
     Nếu `fn` ném lỗi, transaction được rollback và không có gì được ghi.
     """
-    return await asyncio.to_thread(_update_sync, fn)
+    result = await asyncio.to_thread(_update_sync, fn)
+    _invalidate_cache()
+    return result
 
 
 # --------------------------------------------------------------------------- #
