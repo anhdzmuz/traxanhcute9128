@@ -9,19 +9,17 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import cogs.Challenge as challenge  # noqa: E402
+import cogs.League as league  # noqa: E402
 import cogs.core as core  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def reset_state():
     core._invalidate_cache()
-    challenge._last_click.clear()
-    challenge._pending_refresh.clear()
+    league._last_click.clear()
     yield
     core._invalidate_cache()
-    challenge._last_click.clear()
-    challenge._pending_refresh.clear()
+    league._last_click.clear()
 
 
 def test_read_data_is_cached_between_calls(monkeypatch):
@@ -29,7 +27,7 @@ def test_read_data_is_cached_between_calls(monkeypatch):
 
     def fake_load():
         calls["n"] += 1
-        return {"towers": {}, "wallets": {}, "players": {}}
+        return {"leader": {}, "week": {}, "players": {}}
 
     monkeypatch.setattr(core, "load_data", fake_load)
 
@@ -51,7 +49,7 @@ def test_write_invalidates_cache(monkeypatch):
 
     def fake_load():
         calls["n"] += 1
-        return {"towers": {}, "wallets": {}, "players": {}}
+        return {"leader": {}, "week": {}, "players": {}}
 
     monkeypatch.setattr(core, "load_data", fake_load)
 
@@ -66,12 +64,12 @@ def test_write_invalidates_cache(monkeypatch):
 
 def test_click_cooldown_blocks_repeat_clicks():
     user = 4242
-    assert challenge._click_allowed(user) is True
-    assert challenge._click_allowed(user) is False
-    assert challenge._click_allowed(user + 1) is True, "người khác không bị ảnh hưởng"
+    assert league._click_allowed(user) is True
+    assert league._click_allowed(user) is False
+    assert league._click_allowed(user + 1) is True, "người khác không bị ảnh hưởng"
 
-    challenge._last_click[user] = time.monotonic() - challenge.CLICK_COOLDOWN - 1
-    assert challenge._click_allowed(user) is True
+    league._last_click[user] = time.monotonic() - league.CLICK_COOLDOWN - 1
+    assert league._click_allowed(user) is True
 
 
 def test_pool_keeps_statement_timeout_out_of_startup_packet(monkeypatch):
@@ -113,6 +111,6 @@ def test_configure_connection_sets_timeout_and_commits(monkeypatch):
 def test_click_cooldown_prunes_old_entries():
     moment = time.monotonic()
     for uid in range(5100):
-        challenge._last_click[uid] = moment - 120  # đều đã cũ
-    assert challenge._click_allowed(999999) is True
-    assert len(challenge._last_click) < 5100
+        league._last_click[uid] = moment - 120  # đều đã cũ
+    assert league._click_allowed(999999) is True
+    assert len(league._last_click) < 5100
