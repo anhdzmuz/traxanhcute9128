@@ -575,7 +575,8 @@ class League(commands.Cog):
             thread = await get_channel(self.bot, int(thread_id))
         except (TypeError, ValueError):
             return
-        if thread is None:
+        if not isinstance(thread, discord.Thread):
+            # Chỉ xóa thread; tuyệt đối không đụng vào kênh thường.
             return
         try:
             await thread.delete()
