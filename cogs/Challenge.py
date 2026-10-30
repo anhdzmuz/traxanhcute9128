@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import time
 from datetime import timedelta
 
 import discord
@@ -11,6 +13,59 @@ from cogs.core import GYM_CHANNEL_ID, is_gym_channel, is_owner, read_data, updat
 log = logging.getLogger(__name__)
 
 TierOption = app_commands.Range[int, 1, 3]
+
+# --- Chống spam và giới hạn tần suất gọi API Discord ----------------------- #
+
+CLICK_COOLDOWN = 3.0        # giây tối thiểu giữa hai lần bấm nút của một người
+COUNT_REFRESH_DELAY = 5.0   # gộp nhiều lượt bấm thành một lần sửa embed
+
+_last_click = {}
+_pending_refresh = {}
+
+
+def _click_allowed(user_id):
+    """Chặn bấm nút liên tục: mỗi lượt bấm là một transaction + một lần gọi API."""
+    moment = time.monotonic()
+    if len(_last_click) > 5000:
+        for uid, at in list(_last_click.items()):
+            if moment - at > 60:
+                _last_click.pop(uid, None)
+    last = _last_click.get(user_id)
+    if last is not None and moment - last < CLICK_COOLDOWN:
+        return False
+    _last_click[user_id] = moment
+    return True
+
+
+def _schedule_count_refresh(tier, message, message_id):
+    """Cập nhật số ứng viên trên thông báo, gộp các lượt bấm trong 5 giây.
+
+    Sửa embed ngay mỗi lượt bấm sẽ đụng giới hạn ~5 lần sửa/5 giây cho một tin
+    nhắn khi nhiều người bấm cùng lúc. Vì vậy chỉ hẹn một lần sửa duy nhất.
+    """
+    task = _pending_refresh.get(tier)
+    if task is not None and not task.done():
+        return
+
+    async def refresh():
+        try:
+            await asyncio.sleep(COUNT_REFRESH_DELAY)
+            data = await read_data(fresh=True)
+            session = data["active_registrations"].get(tier)
+            if not session or session.get("announcement_message_id") != message_id:
+                return
+            await message.edit(
+                embed=build_announcement_embed(
+                    tier, data["towers"][tier].get("title", "Dark Gym"), session
+                )
+            )
+        except (discord.HTTPException, KeyError, TypeError):
+            log.exception("Không cập nhật được số ứng viên Tầng %s", tier)
+        finally:
+            _pending_refresh.pop(tier, None)
+
+    _pending_refresh[tier] = asyncio.create_task(refresh())
+
 
 WINDOW_ERRORS = {
     "past": "Giờ bắt đầu phải ở tương lai trong ngày mai.",
@@ -73,11 +128,13 @@ def build_announcement_embed(tier, title, session):
     return embed
 
 
-async def post_announcement(channel, tier, title, session):
+async def post_announcement(channel, tier, title, session, silent=False):
+    # silent=True: tin nhắc không đẩy thông báo cho cả server đông người.
     return await channel.send(
         content=gl.announcement_text(tier, session),
         embed=build_announcement_embed(tier, title, session),
         view=RegistrationView(tier),
+        silent=silent,
     )
 
 
@@ -173,8 +230,12 @@ class RegistrationView(discord.ui.View):
         self.add_item(button)
 
     async def toggle(self, interaction):
-        await interaction.response.defer(ephemeral=True)
         tier, user_id, current = self.tier, interaction.user.id, gl.now()
+        if not _click_allowed(user_id):
+            return await interaction.response.send_message(
+                "Bạn bấm hơi nhanh, vui lòng thử lại sau vài giây.", ephemeral=True
+            )
+        await interaction.response.defer(ephemeral=True)
         status, payload = await update_data(lambda d: gl.toggle_registration(d, tier, user_id, current))
 
         if status == "closed":
@@ -187,12 +248,9 @@ class RegistrationView(discord.ui.View):
             text = f"Bạn vừa thua ở Tầng {tier} nên phải chờ thêm {gl.format_remaining(payload)} mới được thách đấu lại."
         else:
             text = "Bạn đã hủy đăng ký." if status == "left" else f"Đã ghi danh Tầng {tier}. Hiện có {payload['count']} ứng viên."
-            # Cập nhật số ứng viên trên chính tin nhắn có nút bấm.
+            # Cập nhật số ứng viên trên chính tin nhắn có nút bấm (gộp 5 giây/lần).
             if interaction.message is not None:
-                try:
-                    await interaction.message.edit(embed=build_announcement_embed(tier, payload["title"], payload["session"]))
-                except discord.HTTPException:
-                    pass
+                _schedule_count_refresh(tier, interaction.message, interaction.message.id)
         await interaction.followup.send(text, ephemeral=True)
 
     async def on_error(self, interaction, error, item):
@@ -255,9 +313,9 @@ class Challenge(commands.Cog):
             return
         try:
             if status == "empty":
-                await channel.send(f"Lịch thách đấu Tầng {tier} đã đến giờ nhưng không có người đăng ký. Phiên đã đóng.")
+                await channel.send(f"Lịch thách đấu Tầng {tier} đã đến giờ nhưng không có người đăng ký. Phiên đã đóng.", silent=True)
             elif status == "cancelled":
-                await channel.send(f"Phiên thách đấu Tầng {tier} bị hủy vì không có Quản Tháp hoặc đã có trận đang diễn ra.")
+                await channel.send(f"Phiên thách đấu Tầng {tier} bị hủy vì không có Quản Tháp hoặc đã có trận đang diễn ra.", silent=True)
             else:
                 start, end = payload["start"], payload["end"]
                 embed = discord.Embed(
@@ -275,7 +333,13 @@ class Challenge(commands.Cog):
             log.exception("Không gửi được thông báo kết quả bốc thăm Tầng %s", tier)
 
     async def _maybe_remind(self, tier, session, snapshot, current):
-        """Nhắc lại thông báo mỗi 30 phút: xóa tin cũ rồi đăng tin mới để không bị chồng."""
+        """Nhắc lại mỗi 30 phút bằng cách SỬA tin thông báo cũ.
+
+        Trước đây bot xóa rồi đăng lại, tức là mỗi 30 phút lại đẩy một tin mới
+        vào kênh (3 tầng = 6 tin/giờ). Trên server đông người đó vừa gây nhiễu
+        vừa tốn lượt gọi API. Sửa tại chỗ chỉ tốn một lần gọi và không làm trôi
+        tin nhắn.
+        """
         raw = session.get("next_announcement_at")
         try:
             next_at = gl.parse_dt(raw) if raw else current + gl.ANNOUNCE_INTERVAL
@@ -284,16 +348,32 @@ class Challenge(commands.Cog):
         if current < next_at:
             return
 
-        message = None
         channel_id = int(session.get("channel_id") or GYM_CHANNEL_ID)
         channel = await get_channel(self.bot, channel_id)
-        if channel is not None:
-            await delete_message_quietly(self.bot, channel_id, session.get("announcement_message_id"))
+        title = snapshot["towers"][tier].get("title", "Dark Gym")
+        message = None
+
+        stored_id = session.get("announcement_message_id")
+        if channel is not None and stored_id:
             try:
-                title = snapshot["towers"][tier].get("title", "Dark Gym")
-                message = await post_announcement(channel, tier, title, session)
+                partial = channel.get_partial_message(int(stored_id))
+                await partial.edit(
+                    content=gl.announcement_text(tier, session),
+                    embed=build_announcement_embed(tier, title, session),
+                    view=RegistrationView(tier),
+                )
+                message = partial
+            except discord.NotFound:
+                message = None  # tin đã bị xóa tay -> đăng lại bên dưới
+            except discord.HTTPException:
+                log.exception("Không sửa được thông báo nhắc Tầng %s", tier)
+
+        if message is None and channel is not None:
+            try:
+                message = await post_announcement(channel, tier, title, session, silent=True)
             except discord.HTTPException:
                 log.exception("Không đăng được thông báo nhắc Tầng %s", tier)
+
         message_id = message.id if message else None
         await update_data(lambda d: gl.mark_announced(d, tier, session["start_at"], gl.now(), message_id))
 
