@@ -26,14 +26,19 @@ TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 NOTICE_HOUR = 6          # Chủ Nhật
 PING_HOUR = 18           # Chủ Nhật
+REPOST_HOURS = 8         # đăng lại panel đăng ký mỗi 8 giờ (im lặng)
 QUALIFIER_BEST_OF = 1    # 2 người bốc thăm đánh BO1
 TITLE_BEST_OF = 3        # thách đấu leader đánh BO3
 MAX_HISTORY = 200
 
 DEFAULT_STATE = {
     "leader": {"user_id": None, "term_start": None, "term_end": None},
+    # Người thắng trận tranh chức: chỉ nhậm chức vào 00:00 thứ 2 tuần sau.
+    "leader_elect": None,
+    "wl_seq": 0,          # số thứ tự tuần giải đấu (WL1, WL2, ...)
     "week": {
         "week_id": None,
+        "wl": 0,
         "phase": "idle",   # idle | open | qualifier | title | done
         "registrations": [],
         "picked": [],
@@ -152,6 +157,18 @@ def merge_defaults(data):
             "term_end": leader.get("term_end"),
         })
 
+    elect = data.get("leader_elect")
+    if isinstance(elect, bool):
+        elect = None
+    if isinstance(elect, int):
+        state["leader_elect"] = elect
+    elif isinstance(elect, str) and elect.isdigit():
+        state["leader_elect"] = int(elect)
+
+    seq = data.get("wl_seq")
+    if isinstance(seq, int) and not isinstance(seq, bool) and seq >= 0:
+        state["wl_seq"] = seq
+
     week = data.get("week")
     if isinstance(week, dict):
         state["week"].update({k: week[k] for k in state["week"] if k in week})
@@ -164,6 +181,8 @@ def merge_defaults(data):
         for phase in ("qualifier", "title"):
             if not isinstance(state["week"]["submissions"].get(phase), dict):
                 state["week"]["submissions"][phase] = {}
+        if not isinstance(state["week"].get("wl"), int) or isinstance(state["week"].get("wl"), bool):
+            state["week"]["wl"] = 0
     if state["week"].get("phase") not in ("idle", "open", "qualifier", "title", "done"):
         state["week"]["phase"] = "idle"
 
@@ -226,6 +245,25 @@ def _crown(state, user_id, current):
     _bump(state, user_id, "titles")
 
 
+def promote_elect(state, current):
+    """Đưa người thắng lên làm Gym Leader khi bước sang tuần mới.
+
+    `current` phải là mốc cuối tuần trước (Chủ Nhật 23:59:59), để nhiệm kỳ
+    rơi đúng vào tuần mới bắt đầu ngay sau đó.
+    """
+    elect = state.get("leader_elect")
+    if not elect:
+        return None
+    previous = state["leader"].get("user_id")
+    _crown(state, elect, current)
+    if previous == elect:
+        # Bảo vệ chức: không tính thêm một danh hiệu mới.
+        player = get_player(state, elect)
+        player["titles"] = max(0, player.get("titles", 0) - 1)
+    state["leader_elect"] = None
+    return int(elect)
+
+
 def extend_term(state, current):
     if not state["leader"].get("user_id"):
         return
@@ -251,6 +289,18 @@ def toggle_registration(state, user_id, current):
         return "left", {"count": len(registrations)}
     registrations.append(user_id)
     return "joined", {"count": len(registrations)}
+
+
+def leave_registration(state, user_id, current):
+    """Hủy đăng ký (không bao giờ tự đăng ký lại như `toggle_registration`)."""
+    week = state["week"]
+    if week["phase"] != "open":
+        return "closed", None
+    registrations = week["registrations"]
+    if user_id not in registrations:
+        return "absent", {"count": len(registrations)}
+    registrations.remove(user_id)
+    return "left", {"count": len(registrations)}
 
 
 def _pick_two(candidates, priority, rng):
@@ -284,7 +334,8 @@ def _draw(state, current, rng):
         week["picked"] = [challenger]
         state["priority"][str(challenger)] = 0
         if not leader_id:
-            _crown(state, challenger, current)
+            # Chưa có leader: người duy nhất đăng ký sẽ nhậm chức 00:00 thứ 2.
+            state["leader_elect"] = int(challenger)
             week["phase"] = "done"
             return "crowned", {"user_id": challenger}
         week["phase"] = "title"
@@ -341,9 +392,10 @@ def record_qualifier(state, winner_id, current):
         "at": current.isoformat(),
     })
 
-    leader_id = state["leader"].get("user_id")
+    leader_id = state.get("leader", {}).get("user_id")
     if not leader_id:
-        _crown(state, winner_id, current)
+        # Chưa có leader: người thắng BO1 sẽ nhậm chức vào 00:00 thứ 2.
+        state["leader_elect"] = int(winner_id)
         week["phase"] = "done"
         return "ok", {"match_id": match_id, "crowned": winner_id}
 
@@ -375,7 +427,6 @@ def record_title(state, winner_id, current):
         loser = get_player(state, leader_id)
         loser["losses"] += 1
         loser["streak"] = 0
-        _crown(state, challenger, current)
         new_leader = challenger
     else:
         loser_id = challenger
@@ -385,8 +436,12 @@ def record_title(state, winner_id, current):
         loser = get_player(state, challenger)
         loser["losses"] += 1
         loser["streak"] = 0
-        extend_term(state, current)
         new_leader = leader_id
+
+    # Chưa đổi leader ngay: người thắng chỉ nhậm chức vào 00:00 thứ 2 tuần sau
+    # (xem `promote_elect`). Leader đương nhiệm bảo vệ được thì cũng gia hạn
+    # đúng vào mốc đó.
+    state["leader_elect"] = int(new_leader)
 
     match_id = _push_history(state, {
         "type": "title",
@@ -565,18 +620,25 @@ def dispute_result(state, submitter_id, by_id, current):
 # --------------------------------------------------------------------------- #
 
 def _start_week(state, current):
+    state["wl_seq"] = int(state.get("wl_seq") or 0) + 1
     state["week"] = {
         "week_id": week_id(current),
+        "wl": state["wl_seq"],
         "phase": "open",
         "registrations": [],
         "picked": [],
         "message_id": None,
         "qualifier": None,
         "title": None,
-        "flags": {},
+        "flags": {"repost_at": current.isoformat()},
         "threads": {},
         "submissions": {},
     }
+
+
+def reset_state():
+    """Trạng thái sạch như lần đầu chạy bot (dùng cho lệnh /reset)."""
+    return copy.deepcopy(DEFAULT_STATE)
 
 
 def ensure_week(state, current, rng=random):
@@ -590,18 +652,28 @@ def ensure_week(state, current, rng=random):
     current_week = week_id(current)
 
     if week["week_id"] != current_week:
-        # Sang tuần mới. Tuần trước kết thúc dang dở (bot tắt, không ai chốt
-        # kết quả) thì leader được gia hạn, rồi mở đăng ký tuần này.
+        # Sang tuần mới. Người thắng trận tranh chức nhậm chức đúng 00:00 thứ 2;
+        # tuần trước kết thúc dang dở (bot tắt, không ai chốt kết quả) thì leader
+        # đương nhiệm được gia hạn.
         previous_message_id = week.get("message_id")
         previous_threads = [tid for tid in (week.get("threads") or {}).values() if tid]
-        if week["phase"] in ("open", "qualifier", "title"):
-            extend_term(state, current)
+        # Mốc cuối tuần trước: dùng để tính nhiệm kỳ bắt đầu từ tuần này.
+        closing = week_start(current) - timedelta(seconds=1)
+
+        promoted = promote_elect(state, closing)
+        if promoted:
+            actions.append(
+                ("promote", {"user_id": promoted, "week_id": week["week_id"]})
+            )
+        elif week["phase"] in ("open", "qualifier", "title"):
+            extend_term(state, closing)
             kind = "missed" if week["phase"] == "open" else "timeout"
             actions.append(
                 (kind, {"week_id": week["week_id"], "threads": previous_threads})
             )
+
         _start_week(state, current)
-        payload = {"week_id": current_week}
+        payload = {"week_id": current_week, "wl": state["week"]["wl"]}
         if previous_message_id:
             payload["previous_message_id"] = previous_message_id
         actions.append(("open", payload))
@@ -616,6 +688,16 @@ def ensure_week(state, current, rng=random):
         if current >= draw_at(current):
             kind, payload = _draw(state, current, rng)
             actions.append((f"draw_{kind}", payload))
+        else:
+            # Đăng lại panel đăng ký mỗi 8 giờ để tin không bị trôi.
+            last = week["flags"].get("repost_at")
+            try:
+                due = parse_dt(last) + timedelta(hours=REPOST_HOURS) if last else current
+            except (TypeError, ValueError):
+                due = current
+            if current >= due:
+                week["flags"]["repost_at"] = current.isoformat()
+                actions.append(("repost", {"week_id": week["week_id"]}))
 
     if week["phase"] in ("qualifier", "title"):
         if not week["flags"].get("notice") and current >= notice_at(current):
@@ -657,18 +739,27 @@ def phase_label(phase):
 def leader_term_text(state):
     leader = state["leader"]
     if not leader.get("user_id"):
-        return "Chưa có Gym Leader"
-    try:
-        end = parse_dt(leader["term_end"])
-    except (KeyError, TypeError, ValueError):
-        return f"<@{leader['user_id']}>"
-    return f"<@{leader['user_id']}> — hết nhiệm kỳ <t:{int(end.timestamp())}:R>"
+        text = "Chưa có Gym Leader"
+    else:
+        try:
+            end = parse_dt(leader["term_end"])
+            text = f"<@{leader['user_id']}> — hết nhiệm kỳ <t:{int(end.timestamp())}:R>"
+        except (KeyError, TypeError, ValueError):
+            text = f"<@{leader['user_id']}>"
+    elect = state.get("leader_elect")
+    if elect and elect != leader.get("user_id"):
+        text += f"\n👑 Kế nhiệm: <@{elect}> — nhậm chức 00:00 thứ 2"
+    return text
 
 
 def week_summary(state, current):
     """Thông tin ngắn để hiển thị trong /gym."""
     week = state["week"]
-    lines = [f"**Tuần:** `{week['week_id'] or '—'}`", f"**Trạng thái:** {phase_label(week['phase'])}"]
+    wl = week.get("wl") or 0
+    lines = [
+        f"**Tuần:** `{week['week_id'] or '—'}` · WL{wl}",
+        f"**Trạng thái:** {phase_label(week['phase'])}",
+    ]
     if week["phase"] == "open":
         lines.append(f"**Đã đăng ký:** {len(week['registrations'])}")
         lines.append(f"**Bốc thăm:** <t:{int(draw_at(current).timestamp())}:R>")
@@ -691,4 +782,8 @@ def week_summary(state, current):
             lines.append(
                 f"**📤 Biên bản:** <@{sub['submitter_id']}> nộp `{sub.get('score')}` — {label}"
             )
+    if week["phase"] == "done" and state.get("leader_elect"):
+        lines.append(
+            f"**Kế nhiệm:** <@{state['leader_elect']}> — nhậm chức 00:00 thứ 2"
+        )
     return "\n".join(lines)

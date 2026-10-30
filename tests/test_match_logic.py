@@ -61,7 +61,8 @@ def fresh_state(leader_id=LEADER):
 def open_week(registrations=(), leader_id=LEADER):
     state = fresh_state(leader_id)
     actions = ml.ensure_week(state, MONDAY)
-    assert actions == [("open", {"week_id": ml.week_id(MONDAY)})]
+    assert [kind for kind, _ in actions] == ["open"]
+    assert actions[0][1]["week_id"] == ml.week_id(MONDAY)
     state["week"]["registrations"] = list(registrations)
     return state
 
@@ -72,17 +73,39 @@ def open_week(registrations=(), leader_id=LEADER):
 
 def test_monday_opens_the_week_once():
     state = fresh_state()
-    assert ml.ensure_week(state, MONDAY) == [("open", {"week_id": ml.week_id(MONDAY)})]
+    actions = ml.ensure_week(state, MONDAY)
+    assert [kind for kind, _ in actions] == ["open"]
+    assert actions[0][1] == {"week_id": ml.week_id(MONDAY), "wl": 1}
     assert state["week"]["phase"] == "open"
     assert state["week"]["week_id"] == ml.week_id(MONDAY)
     assert state["week"]["registrations"] == []
     assert ml.ensure_week(state, MONDAY) == [], "gọi lại không được mở tuần lần nữa"
 
 
-def test_midweek_is_quiet():
+def test_wl_counter_increments_each_week():
+    state = fresh_state()
+    ml.ensure_week(state, MONDAY)
+    assert state["week"]["wl"] == 1
+
+    ml.ensure_week(state, NEXT_MONDAY)
+    assert state["week"]["wl"] == 2
+
+    ml.ensure_week(state, at(16, 0, 1))
+    assert state["week"]["wl"] == 3
+
+
+def test_panel_reposts_every_8_hours():
     state = open_week([PLAYER_A])
-    assert ml.ensure_week(state, WEDNESDAY) == []
-    assert state["week"]["phase"] == "open"
+    # Vừa mở tuần: chưa tới hạn đăng lại.
+    assert ml.ensure_week(state, MONDAY + timedelta(hours=7, minutes=59)) == []
+
+    actions = ml.ensure_week(state, MONDAY + timedelta(hours=8, minutes=1))
+    assert [kind for kind, _ in actions] == ["repost"]
+
+    # Không đăng lại lần nữa ngay sau đó.
+    assert ml.ensure_week(state, MONDAY + timedelta(hours=8, minutes=3)) == []
+    actions = ml.ensure_week(state, MONDAY + timedelta(hours=16, minutes=5))
+    assert [kind for kind, _ in actions] == ["repost"]
 
 
 def test_registration_toggles_and_blocks_leader():
@@ -94,6 +117,18 @@ def test_registration_toggles_and_blocks_leader():
 
     state["week"]["phase"] = "qualifier"
     assert ml.toggle_registration(state, PLAYER_C, MONDAY)[0] == "closed"
+
+
+def test_leave_registration_never_rejoins():
+    state = open_week()
+    ml.toggle_registration(state, PLAYER_A, MONDAY)
+
+    assert ml.leave_registration(state, PLAYER_A, MONDAY) == ("left", {"count": 0})
+    assert ml.leave_registration(state, PLAYER_A, MONDAY) == ("absent", {"count": 0})
+    assert state["week"]["registrations"] == []
+
+    state["week"]["phase"] = "qualifier"
+    assert ml.leave_registration(state, PLAYER_A, MONDAY)[0] == "closed"
 
 
 # --------------------------------------------------------------------------- #
@@ -161,7 +196,7 @@ def test_leader_is_ignored_if_they_registered():
     assert state["week"]["title"]["challenger_id"] == PLAYER_A
 
 
-def test_first_champion_is_crowned_without_leader():
+def test_first_champion_is_elected_without_leader():
     state = open_week([PLAYER_A, PLAYER_B], leader_id=None)
     ml.ensure_week(state, SUNDAY_DRAW, rng=FirstChoiceRng())
 
@@ -170,7 +205,14 @@ def test_first_champion_is_crowned_without_leader():
     assert status == "ok"
     assert payload["crowned"] == PLAYER_A
     assert state["week"]["phase"] == "done"
+    assert state["leader"]["user_id"] is None, "chưa nhậm chức ngay"
+    assert state["leader_elect"] == PLAYER_A
+
+    # 00:00 thứ 2 mới chính thức thành Gym Leader.
+    actions = ml.ensure_week(state, NEXT_MONDAY)
+    assert [kind for kind, _ in actions] == ["promote", "open"]
     assert state["leader"]["user_id"] == PLAYER_A
+    assert state["leader_elect"] is None
     assert state["players"][str(PLAYER_A)]["titles"] == 1
 
 
@@ -210,7 +252,7 @@ def _to_title(state):
     ml.record_qualifier(state, PLAYER_A, SUNDAY_DRAW)
 
 
-def test_record_title_challenger_becomes_leader():
+def test_record_title_challenger_is_elected_not_crowned_yet():
     state = open_week([PLAYER_A])
     _to_title(state)
 
@@ -218,16 +260,31 @@ def test_record_title_challenger_becomes_leader():
 
     assert status == "ok"
     assert payload["leader_changed"] is True
-    assert state["leader"]["user_id"] == PLAYER_A
-    start, end = ml.next_term(SUNDAY_END)
-    assert state["leader"]["term_start"] == start.isoformat()
-    assert state["leader"]["term_end"] == end.isoformat()
-    assert state["players"][str(PLAYER_A)]["titles"] == 1
+    assert state["leader"]["user_id"] == LEADER, "leader cũ vẫn tại vị tới hết Chủ Nhật"
+    assert state["leader_elect"] == PLAYER_A
+    assert state["players"][str(PLAYER_A)]["titles"] == 0
     assert state["week"]["phase"] == "done"
     assert state["history"][-1]["type"] == "title"
 
 
-def test_record_title_leader_defends_and_extends():
+def test_title_winner_takes_office_at_monday_midnight():
+    state = open_week([PLAYER_A])
+    _to_title(state)
+    ml.record_title(state, PLAYER_A, SUNDAY_END)
+
+    actions = ml.ensure_week(state, NEXT_MONDAY)
+
+    assert [kind for kind, _ in actions] == ["promote", "open"]
+    assert actions[0][1]["user_id"] == PLAYER_A
+    assert state["leader"]["user_id"] == PLAYER_A
+    assert state["leader_elect"] is None
+    start, end = ml.next_term(SUNDAY_END)
+    assert state["leader"]["term_start"] == start.isoformat()
+    assert state["leader"]["term_end"] == end.isoformat()
+    assert state["players"][str(PLAYER_A)]["titles"] == 1
+
+
+def test_record_title_leader_defends_then_term_extends_at_monday():
     state = open_week([PLAYER_A])
     _to_title(state)
 
@@ -236,11 +293,16 @@ def test_record_title_leader_defends_and_extends():
     assert status == "ok"
     assert payload["leader_changed"] is False
     assert state["leader"]["user_id"] == LEADER
-    start, end = ml.next_term(SUNDAY_END)
-    assert state["leader"]["term_end"] == end.isoformat()
+    assert state["leader_elect"] == LEADER
     assert state["players"][str(LEADER)]["wins"] == 1
     assert state["players"][str(PLAYER_A)]["losses"] == 1
-    assert state["players"][str(LEADER)]["titles"] == 0
+
+    ml.ensure_week(state, NEXT_MONDAY)
+
+    assert state["leader"]["user_id"] == LEADER
+    start, end = ml.next_term(SUNDAY_END)
+    assert state["leader"]["term_end"] == end.isoformat()
+    assert state["players"][str(LEADER)]["titles"] == 0, "bảo vệ chức không tính danh hiệu mới"
 
 
 def test_record_title_rejects_outsider():
@@ -292,7 +354,9 @@ def test_rollover_after_unfinished_week_extends_and_reopens():
     assert state["week"]["week_id"] == ml.week_id(NEXT_MONDAY)
     assert state["week"]["registrations"] == []
     assert state["leader"]["user_id"] == LEADER
-    start, end = ml.next_term(NEXT_MONDAY)
+    # Nhiệm kỳ tính cho tuần mới (bắt đầu ngay lúc 00:00 thứ 2), không nhảy thêm tuần.
+    start, end = ml.next_term(SUNDAY_END)
+    assert state["leader"]["term_start"] == start.isoformat()
     assert state["leader"]["term_end"] == end.isoformat()
 
 
@@ -505,7 +569,7 @@ def test_confirm_qualifier_moves_to_title():
     assert state["players"][str(PLAYER_A)]["wins"] == 1
 
 
-def test_confirm_title_changes_leader():
+def test_confirm_title_elects_next_leader():
     state = open_week([PLAYER_A])
     _to_title(state)
     ml.submit_result(state, PLAYER_A, "2-1", PROOF, SUNDAY_END)
@@ -514,8 +578,12 @@ def test_confirm_title_changes_leader():
 
     assert status == "ok"
     assert payload["result"]["leader_changed"] is True
-    assert state["leader"]["user_id"] == PLAYER_A
     assert state["week"]["phase"] == "done"
+    assert state["leader_elect"] == PLAYER_A
+    assert state["leader"]["user_id"] == LEADER
+
+    ml.ensure_week(state, NEXT_MONDAY)
+    assert state["leader"]["user_id"] == PLAYER_A
 
 
 def test_confirm_without_submission():
@@ -578,3 +646,33 @@ def test_rollover_carries_thread_ids_for_cleanup():
 
     assert actions[0][0] == "timeout"
     assert actions[0][1]["threads"] == [555]
+
+
+def test_merge_defaults_reads_new_fields():
+    state = ml.merge_defaults(
+        {"leader_elect": "2001", "wl_seq": 7, "week": {"wl": 7, "week_id": "2026-W45"}}
+    )
+    assert state["leader_elect"] == 2001
+    assert state["wl_seq"] == 7
+    assert state["week"]["wl"] == 7
+
+    broken = ml.merge_defaults({"leader_elect": True, "wl_seq": -3, "week": {"wl": "x"}})
+    assert broken["leader_elect"] is None
+    assert broken["wl_seq"] == 0
+    assert broken["week"]["wl"] == 0
+
+
+def test_reset_state_returns_clean_default():
+    state = open_week([PLAYER_A])
+    state["leader_elect"] = PLAYER_A
+    state["wl_seq"] = 5
+    state["week"]["threads"] = {"qualifier": 1}
+
+    clean = ml.reset_state()
+
+    assert clean == ml.DEFAULT_STATE
+    assert clean["week"]["phase"] == "idle"
+    assert clean["leader"]["user_id"] is None
+    assert clean["leader_elect"] is None
+    assert clean["wl_seq"] == 0
+    assert clean["week"]["threads"] == {}

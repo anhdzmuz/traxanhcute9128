@@ -59,6 +59,25 @@ def test_score_modal_fields():
     assert "BO3" in modal.children[0].label
 
 
+def test_registration_panel_title_uses_wl_number():
+    state = ml.merge_defaults({})
+    state["week"].update({"week_id": "2026-W45", "wl": 7, "phase": "open"})
+
+    embed = league._registration_embed(state, ml.now())
+
+    assert embed.title == "Đăng kí thách đấu Gym Leader - WL7"
+    assert "00:00 thứ 2" in embed.description
+
+
+def test_unregister_and_reset_views():
+    assert [c.custom_id for c in league._unregister_view().children] == ["league:unregister"]
+    assert [c.custom_id for c in league._reset_view(1).children] == ["league:reset:1"]
+    assert [c.custom_id for c in league._reset_view(2).children] == [
+        "league:reset:2",
+        "league:reset:cancel",
+    ]
+
+
 class FakeAttachment:
     def __init__(self, filename="a.png", content_type="image/png"):
         self.filename = filename
