@@ -1,55 +1,69 @@
-# 🌑 Dark Gym V2
+# 🏟️ Weekly Gym League
 
-Bản nâng cấp của hệ thống Lunar Eclipse Tower.
+Bot quản lý **một** Gym: mỗi tuần tìm ra người thách đấu Gym Leader, ai thắng thì
+giữ chức cho tuần sau. Không có tiền tệ, không có huy hiệu, không cần quyền
+Administrator.
 
-## Owner
+Top 1/2/3 và 3 danh hiệu do người quản lý Gym trao thưởng **ngoài Discord**;
+bot chỉ ghi nhận kết quả và lịch sử trận.
 
-Owner ID duy nhất của hệ thống: `1031799680792809522`
+## Chu kỳ một tuần (giờ Việt Nam)
 
-Các lệnh quản lý Gym không còn yêu cầu quyền Administrator của Discord server.
+| Thời điểm | Việc xảy ra |
+|---|---|
+| Thứ 2 00:00 | Mở đăng ký **cả tuần** + nút "Đăng ký / Hủy đăng ký" (tin nhắn im lặng) |
+| Chủ Nhật 00:00 | Bốc thăm (tin nhắn im lặng) |
+| Chủ Nhật 06:00 | Thông báo lại tình trạng tuần (im lặng) |
+| Chủ Nhật 18:00 | Ping nhắc một lần (có thông báo) |
+| Chủ Nhật 23:59:59 | Hạn chót nhận kết quả |
 
-## Tính năng V2
+Kết quả bốc thăm:
 
-- 3 tầng Lunar Eclipse Tower.
-- Promote Quản Tháp bằng Owner ID.
-- Challenge mở trong 12 giờ.
-- Chặn mở challenge trùng hoặc khi Gym đang bảo hộ/trận đang diễn ra.
-- Random Challenger và tạo Active Match có Match ID.
-- Chốt kết quả bằng Active Match, không cần nhập tay người thách đấu.
-- 48 giờ revenge cooldown khi thua.
-- 12 giờ bảo hộ khi chiếm Gym.
-- +15 Dark Stardust cho Quản Tháp phòng thủ thành công.
-- +10 Dark Stardust mỗi 3 giờ cho mỗi tầng đang có Quản Tháp.
-- `/dark_profile` — hồ sơ Trainer.
-- `/dark_rank` — leaderboard Wins / Captures / Defenses.
-- `/lich_su` — lịch sử 100 trận gần nhất.
-- `/tran_dang_dien_ra` — các trận đang chờ chốt.
-- Defense Streak cho từng Gym.
-- Achievement: First Blood, Conqueror, Guardian, Dark Master, Unstoppable, Eclipse.
-- Tự động migrate `gym_data.json` cũ sang schema mới.
-- Ghi dữ liệu JSON theo kiểu atomic để giảm nguy cơ file bị hỏng khi ghi.
+- **0 người** → Gym Leader giữ chức, nhiệm kỳ được gia hạn thêm 1 tuần.
+- **1 người** → người đó thách đấu Gym Leader ngay, **BO3**.
+- **2+ người** → chọn ngẫu nhiên 2 người đánh **BO1**; người thắng thách đấu
+  Gym Leader trong **BO3**.
+- Chưa có Gym Leader → người thắng (hoặc người đăng ký duy nhất) nhận chức luôn.
 
-## Command chính
+Hai người chơi **tự thương lượng thời gian thi đấu** sau khi có kết quả bốc thăm.
+Quá hạn Chủ Nhật mà chưa có kết quả → Gym Leader giữ chức và được gia hạn.
+
+### Ưu tiên người chưa được chọn
+
+Người đăng ký mà không được bốc trúng sẽ được **+1 ưu tiên** cho tuần sau, nên
+đăng ký nhiều tuần sẽ có cơ hội đánh cao hơn. Ai được chọn thì ưu tiên về 0.
+
+## Lệnh
 
 ### Người chơi
-- `/thap_gym`
-- `/thach_dau tang:<1-3>`
-- `/danh_sach_cho tang:<1-3>`
-- `/tran_dang_dien_ra`
-- `/dark_profile [member]`
-- `/dark_rank`
-- `/lich_su [member]`
-- `/stardust_altar`
-- `/teambuilding`
+- `/gym` — Gym Leader hiện tại và tình trạng tuần này.
+- `/dang_ky` — đăng ký / hủy đăng ký (dùng thay cho nút).
+- `/lich_su [member]` — 10 trận gần nhất.
+- `/bang_xep_hang` — top thắng nhiều và top số lần làm Leader.
 
-### Owner
-- `/promote_darkgym member tang`
-- `/mo_thach_dau tang khung_gio_quan_thap khung_gio_nguoi_dau`
-- `/huy_thach_dau tang`
-- `/ket_qua_gym tang ket_qua`
+### Owner (ID trong `cogs/core.py`)
+- `/ket_qua nguoi_thang:@X` — chốt người thắng trận đang diễn ra (BO1 hoặc BO3).
+- `/gan_leader member:@X` — gán Gym Leader thủ công cho tuần sau.
+- `/huy_tuan` — hủy tuần hiện tại, gia hạn Leader.
 
-## Lưu ý
+## Cấu hình
 
-- Bot cần được cấp quyền gửi message/embed trong `GYM_CHANNEL_ID`.
-- Token vẫn lấy từ biến môi trường `DISCORD_TOKEN`.
-- `gym_data.json` được tạo tự động khi bot chạy lần đầu.
+| Biến | Ý nghĩa |
+|---|---|
+| `DISCORD_TOKEN` | Token bot. |
+| `DATABASE_URL` | Chuỗi kết nối Postgres (Neon). |
+
+`OWNER_ID` và `GYM_CHANNEL_ID` nằm trong `cogs/core.py`.
+
+## Cấu trúc
+
+- `match_logic.py` — toàn bộ luật tuần (không import discord/psycopg, test được).
+- `cogs/core.py` — pool Postgres, cache đọc, helper dùng chung.
+- `cogs/League.py` — cog Discord: vòng lặp 2 phút, nút đăng ký, slash commands.
+- `tests/` — test luật tuần và các chốt chặn tải.
+
+## Kiểm thử
+
+```bash
+python -m pytest tests -q
+```

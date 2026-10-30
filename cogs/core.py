@@ -8,10 +8,9 @@ import time
 import discord
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
-from discord.ext import commands, tasks
 from discord import app_commands
 
-import gym_logic as gl
+import match_logic as ml
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +112,7 @@ def initialize_storage(attempts=5, delay=3.0):
                     VALUES (%s, %s)
                     ON CONFLICT (state_key) DO NOTHING
                     """,
-                    (DATA_KEY, Jsonb(copy.deepcopy(gl.DEFAULT_DATA))),
+                    (DATA_KEY, Jsonb(copy.deepcopy(ml.DEFAULT_STATE))),
                 )
             print("✅ PostgreSQL storage ready; clean state is used when the database is empty.")
             return
@@ -134,7 +133,7 @@ def _decode_row(row):
         data = json.loads(data)
     if not isinstance(data, dict):
         raise RuntimeError("Dữ liệu Dark Gym trong PostgreSQL không hợp lệ; từ chối ghi đè.")
-    return gl.merge_defaults(data)
+    return ml.merge_defaults(data)
 
 
 def load_data():
@@ -231,89 +230,9 @@ async def fail_deferred(interaction: discord.Interaction, text: str):
 # Cog
 # --------------------------------------------------------------------------- #
 
-class Core(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-
-    async def cog_load(self):
-        self.reward_stardust_loop.start()
-
-    def cog_unload(self):
-        self.reward_stardust_loop.cancel()
-
-    @tasks.loop(minutes=5)
-    async def reward_stardust_loop(self):
-        # Một lỗi DB thoáng qua không được phép làm vòng lặp dừng hẳn.
-        try:
-            await update_data(lambda data: gl.apply_stardust(data, gl.now()))
-        except Exception:
-            log.exception("Lỗi khi cộng Dark Stardust định kỳ")
-
-    @reward_stardust_loop.before_loop
-    async def before_reward_loop(self):
-        await self.bot.wait_until_ready()
-
-    @app_commands.command(name="stardust_altar", description="Xem số dư Dark Stardust.")
-    @is_gym_channel()
-    async def stardust_altar(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        data = await read_data()
-        balance = data["wallets"].get(str(interaction.user.id), 0)
-        await interaction.followup.send(
-            f"🔮 **DARK STARDUST ALTAR**\n\n👤 {interaction.user.mention}\n✨ Số dư: **{balance} Dark Stardust**"
-        )
-
-    @app_commands.command(name="dark_rank", description="Xem bảng xếp hạng Dark Gym.")
-    @is_gym_channel()
-    async def dark_rank(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        data = await read_data()
-        players = [(int(uid), player) for uid, player in data["players"].items()]
-        wins = sorted(players, key=lambda x: (x[1].get("wins", 0), x[1].get("best_win_streak", 0)), reverse=True)[:5]
-        captures = sorted(players, key=lambda x: x[1].get("captures", 0), reverse=True)[:5]
-        defenses = sorted(players, key=lambda x: x[1].get("defenses", 0), reverse=True)[:5]
-
-        def lines(items, key):
-            if not items:
-                return "*Chưa có dữ liệu*"
-            return "\n".join(f"**{i}.** <@{uid}> — `{p.get(key, 0)}`" for i, (uid, p) in enumerate(items, 1))
-
-        embed = discord.Embed(title="🌑 DARK GYM RANKING", color=0x2f3136)
-        embed.add_field(name="🏆 Most Wins", value=lines(wins, "wins"), inline=False)
-        embed.add_field(name="👑 Gym Captures", value=lines(captures, "captures"), inline=False)
-        embed.add_field(name="🛡️ Best Defenders", value=lines(defenses, "defenses"), inline=False)
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="lich_su", description="Xem lịch sử các trận Dark Gym.")
-    @is_gym_channel()
-    async def lich_su(self, interaction: discord.Interaction, member: discord.User | None = None):
-        await interaction.response.defer()
-        data = await read_data()
-        history = data["match_history"]
-        if member:
-            history = [m for m in history if m.get("challenger_id") == member.id or m.get("owner_id") == member.id]
-        history = history[-10:][::-1]
-
-        embed = discord.Embed(title="⚔️ DARK GYM — LỊCH SỬ TRẬN", color=0xe74c3c)
-        if not history:
-            embed.description = "*Chưa có trận đấu nào được ghi nhận.*"
-        else:
-            for match in history:
-                result = "🏆 Challenger thắng" if match["result"] == "thang" else "🛡️ Quản Tháp phòng thủ thành công"
-                embed.add_field(
-                    name=f"#{match['match_id']} — Tầng {match['tower']}",
-                    value=f"⚔️ <@{match['challenger_id']}> vs <@{match['owner_id']}>\n{result}\n📅 `{match['ended_at']}`",
-                    inline=False,
-                )
-        await interaction.followup.send(embed=embed)
-
-    @app_commands.command(name="teambuilding", description="Xem quy định về cách xây dựng đội hình thi đấu.")
-    @is_gym_channel()
-    async def teambuilding(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="📝 QUY ĐỊNH TEAMBUILDING - THÁNH ĐỊA BÓNG ĐÊM", color=0x71368a)
-        embed.description = gl.get_teambuilding_text()
-        await interaction.response.send_message(embed=embed)
+# Module này chỉ cung cấp hạ tầng (pool, cache, helper) cho các cog khác.
+# `load_extension` vẫn cần một hàm `setup`, nên giữ lại một setup rỗng.
 
 
 async def setup(bot):
-    await bot.add_cog(Core(bot))
+    pass
