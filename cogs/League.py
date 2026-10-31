@@ -62,6 +62,37 @@ async def get_channel(client, channel_id):
     return channel
 
 
+# Quyền bot cần trong kênh Gym (không cần Administrator).
+PANEL_PERMS = {
+    "send_messages": "Send Messages",
+    "embed_links": "Embed Links",
+    "attach_files": "Attach Files",
+    "read_message_history": "Read Message History",
+}
+
+THREAD_PERMS = {
+    "create_private_threads": "Create Private Threads",
+    "send_messages_in_threads": "Send Messages in Threads",
+    "manage_threads": "Manage Threads",
+    "read_message_history": "Read Message History",
+    "attach_files": "Attach Files",
+}
+
+
+def missing_permissions(channel, required=None):
+    """Tên các quyền bot còn thiếu trong kênh (rỗng nếu đủ)."""
+    guild = getattr(channel, "guild", None)
+    me = getattr(guild, "me", None)
+    if me is None or not hasattr(channel, "permissions_for"):
+        return []
+    perms = channel.permissions_for(me)
+    return [
+        label
+        for attr, label in (required or PANEL_PERMS).items()
+        if not getattr(perms, attr, False)
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Luật của Gym (hiển thị trong panel và /luat)
 # --------------------------------------------------------------------------- #
@@ -549,7 +580,11 @@ class League(commands.Cog):
             try:
                 await self._dispatch(channel, kind, payload)
             except discord.HTTPException:
-                log.exception("Không gửi được thông báo giải đấu (%s)", kind)
+                log.exception(
+                    "Không gửi được thông báo giải đấu (%s) — thiếu quyền: %s",
+                    kind,
+                    ", ".join(missing_permissions(channel)) or "không rõ",
+                )
 
     async def _dispatch(self, channel, kind, payload):
         current = ml.now()
@@ -1235,6 +1270,7 @@ class League(commands.Cog):
                 "Chỉ người quản lý Gym mới dùng được lệnh này.", ephemeral=True
             )
         await interaction.response.defer(ephemeral=True)
+        channel = None
         try:
             # Mở lại đăng ký của tuần hiện tại để panel luôn dùng được (kể cả sau /reset).
             data = await update_data(lambda d: ml.force_open_signup(d, ml.now()))
@@ -1250,9 +1286,12 @@ class League(commands.Cog):
             await update_data(lambda d: d["signup"].__setitem__("message_id", message.id))
         except discord.Forbidden:
             log.exception("Thiếu quyền khi đăng panel đăng ký")
+            missing = missing_permissions(channel) if channel is not None else []
+            detail = ", ".join(missing) or "Send Messages, Embed Links, Attach Files"
             return await interaction.followup.send(
-                "Bot thiếu quyền trong kênh Gym — cần **Send Messages**, **Embed Links**, "
-                "**Attach Files**.",
+                f"Bot thiếu quyền trong kênh <#{GYM_CHANNEL_ID}>: **{detail}**.\n"
+                "Cấp ở **Edit Channel → Permissions** cho role của bot (hoặc mời lại bot "
+                "bằng link có đủ quyền).",
                 ephemeral=True,
             )
         except Exception as exc:  # noqa: BLE001 - owner cần thấy lỗi thật để báo lại
