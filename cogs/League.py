@@ -1235,22 +1235,34 @@ class League(commands.Cog):
                 "Chỉ người quản lý Gym mới dùng được lệnh này.", ephemeral=True
             )
         await interaction.response.defer(ephemeral=True)
-        data = await read_data(fresh=True)
-        signup = data["signup"]
-        if not signup.get("open"):
-            return await interaction.followup.send(
-                "Đăng ký đang đóng, thử lại sau ít phút.", ephemeral=True
+        try:
+            # Mở lại đăng ký của tuần hiện tại để panel luôn dùng được (kể cả sau /reset).
+            data = await update_data(lambda d: ml.force_open_signup(d, ml.now()))
+            channel = await get_channel(self.bot, GYM_CHANNEL_ID)
+            if channel is None:
+                return await interaction.followup.send(
+                    f"Không tìm thấy kênh Gym (`{GYM_CHANNEL_ID}`).", ephemeral=True
+                )
+            await self._retire_message(channel, data["signup"].get("message_id"))
+            message = await channel.send(
+                embed=_registration_embed(data, ml.now()), view=RegisterView(), silent=True
             )
-        channel = await get_channel(self.bot, GYM_CHANNEL_ID)
-        if channel is None:
-            return await interaction.followup.send("Không tìm thấy kênh Gym.", ephemeral=True)
-        await self._retire_message(channel, signup.get("message_id"))
-        message = await channel.send(
-            embed=_registration_embed(data, ml.now()), view=RegisterView(), silent=True
-        )
-        await update_data(lambda d: d["signup"].__setitem__("message_id", message.id))
+            await update_data(lambda d: d["signup"].__setitem__("message_id", message.id))
+        except discord.Forbidden:
+            log.exception("Thiếu quyền khi đăng panel đăng ký")
+            return await interaction.followup.send(
+                "Bot thiếu quyền trong kênh Gym — cần **Send Messages**, **Embed Links**, "
+                "**Attach Files**.",
+                ephemeral=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - owner cần thấy lỗi thật để báo lại
+            log.exception("Lỗi /tao_dang_ky")
+            return await interaction.followup.send(
+                f"Lỗi khi đăng panel: `{type(exc).__name__}: {str(exc)[:300]}`",
+                ephemeral=True,
+            )
         await interaction.followup.send(
-            f"Đã đăng tin đăng ký **WL{signup.get('wl') or 1}**.", ephemeral=True
+            f"Đã đăng tin đăng ký **WL{data['signup'].get('wl') or 1}**.", ephemeral=True
         )
 
     @app_commands.command(
@@ -1274,8 +1286,15 @@ class League(commands.Cog):
             return await interaction.followup.send(
                 "Cần ít nhất 2 người đăng ký mới mở giải.", ephemeral=True
             )
-        await self._handle_actions(actions)
-        await self._ensure_match_threads()
+        try:
+            await self._handle_actions(actions)
+            await self._ensure_match_threads()
+        except Exception as exc:  # noqa: BLE001 - owner cần thấy lỗi thật để báo lại
+            log.exception("Lỗi /bat_dau")
+            return await interaction.followup.send(
+                f"Đã mở giải nhưng gửi thông báo lỗi: `{type(exc).__name__}: {str(exc)[:300]}`",
+                ephemeral=True,
+            )
         await interaction.followup.send("Đã chốt đăng ký và mở giải.", ephemeral=True)
 
     @app_commands.command(

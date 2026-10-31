@@ -146,6 +146,33 @@ def test_leader_can_register_to_defend():
     assert ml.toggle_registration(state, LEADER, TUESDAY)[0] == "joined"
 
 
+def test_force_open_signup_after_reset():
+    state = ml.reset_state()
+
+    data = ml.force_open_signup(state, MONDAY)
+
+    assert data["signup"]["open"] is True
+    assert data["signup"]["wl"] == 1
+    assert data["signup"]["week_id"] == ml.week_id(MONDAY)
+    assert data["signup"]["registrations"] == []
+    # Gọi lại không tăng WL.
+    ml.force_open_signup(data, MONDAY)
+    assert data["signup"]["wl"] == 1
+
+
+def test_force_open_signup_keeps_current_wl():
+    state = signup_week([PLAYER_A, PLAYER_B, PLAYER_C])
+    ml.ensure_week(state, NEXT_MONDAY)  # WL2 mở, giải WL1 chạy
+    assert state["signup"]["wl"] == 2
+
+    ml.force_open_signup(state, TUESDAY)
+
+    assert state["signup"]["open"] is True
+    assert state["signup"]["wl"] == 2
+    assert state["signup"]["registrations"] == []
+    assert state["tournament"]["phase"] == "qualifier", "không đụng giải đang chạy"
+
+
 # --------------------------------------------------------------------------- #
 # Chốt đăng ký -> vòng loại
 # --------------------------------------------------------------------------- #

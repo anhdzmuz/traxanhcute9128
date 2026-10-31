@@ -80,7 +80,7 @@ Người được chọn thì ưu tiên về 0.
 - `/ket_qua nguoi_thang:@X` — chốt tay người thắng của trận đang mở (tranh chấp / thiếu biên bản).
 - `/gan_leader member:@X` — gán Gym Leader thủ công cho tuần sau.
 - `/huy_giai` — hủy giải đang chạy, gia hạn Leader.
-- `/tao_dang_ky` — đăng lại tin đăng ký ngay.
+- `/tao_dang_ky` — đăng lại tin đăng ký ngay (tự mở lại đăng ký nếu đang đóng).
 - `/reset` — **xóa toàn bộ dữ liệu bot**, xác nhận 2 lần. Sau khi reset, panel **WL1** tự mở trong ~2 phút.
 
 ## Cấu hình
