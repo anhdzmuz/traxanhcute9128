@@ -176,3 +176,38 @@ def test_find_proof_ignores_text_only_and_non_images():
         ]
     )
     assert asyncio.run(league.find_proof(channel, PLAYER_A)) is None
+
+
+class FakePerms:
+    def __init__(self, **flags):
+        self._flags = flags
+
+    def __getattr__(self, name):
+        return self._flags.get(name, False)
+
+
+class FakeGuild:
+    def __init__(self, me):
+        self.me = me
+
+
+class FakePermChannel:
+    def __init__(self, **flags):
+        self.guild = FakeGuild(object())
+        self._flags = flags
+
+    def permissions_for(self, member):
+        return FakePerms(**self._flags)
+
+
+def test_missing_permissions_lists_only_missing_ones():
+    ok = FakePermChannel(
+        send_messages=True, embed_links=True, attach_files=True, read_message_history=True
+    )
+    assert league.missing_permissions(ok) == []
+
+    bad = FakePermChannel(send_messages=True, embed_links=False, attach_files=True)
+    assert league.missing_permissions(bad) == ["Embed Links", "Read Message History"]
+
+    no_guild = FakeChannel([])
+    assert league.missing_permissions(no_guild) == []
