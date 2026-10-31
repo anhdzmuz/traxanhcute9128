@@ -1,7 +1,7 @@
 # 🏟️ Binh Đoàn Bóng Tối ┋ Gym Dark TGA
 
 Bot quản lý **một** Gym: mỗi tuần chạy một giải để tìm ra Gym Leader của tuần sau.
-Không có tiền tệ, không có huy hiệu, không cần quyền Administrator.
+
 
 Top 1/2/3, danh hiệu và Pokémon Shiny thưởng do người điều hành Gym trao
 **ngoài Discord**; bot chỉ lo thể thức, chat riêng từng trận và lịch sử kết quả.
