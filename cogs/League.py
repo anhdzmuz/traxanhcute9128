@@ -203,11 +203,11 @@ def _registration_embed(state, current):
         title=f"Đăng kí thách đấu Gym Leader - WL{wl}",
         color=0x5865F2,
         description=(
-            "Đăng ký mở **cả tuần**, chốt lúc **00:00 Thứ 2** rồi bước vào giải.\n"
+            "Đăng ký đã mở, bắt đầu **00:00 Thứ 2** rồi bước vào giải.\n"
             "**Thứ 2 – Thứ 4:** vòng loại BO1 — mỗi người đấu 1 trận, ai thắng đi tiếp.\n"
             "**Thứ 5 – Thứ 7:** ghép cặp lần 2, rồi random 2 Trainer vào chung kết.\n"
             "**Chủ Nhật:** chung kết **BO3** — thắng là Gym Leader từ **00:00 Thứ 2** tuần sau.\n"
-            "Xem đầy đủ luật bằng `/luat`."
+            "**Xem đầy đủ luật thi đấu bằng lệnh** `/luat`."
         ),
     )
     registrations = signup["registrations"]
@@ -217,16 +217,16 @@ def _registration_embed(state, current):
             shown += f" … (+{len(registrations) - 15})"
     else:
         shown = "*Chưa có ai*"
-    embed.add_field(name="👑 Gym Leader", value=ml.leader_term_text(state), inline=False)
-    embed.add_field(name=f"👥 Đã đăng ký ({len(registrations)})", value=shown, inline=False)
+    embed.add_field(name="Gym Leader", value=ml.leader_term_text(state), inline=False)
+    embed.add_field(name=f"Đã đăng ký ({len(registrations)})", value=shown, inline=False)
     embed.add_field(
-        name="⏰ Chốt đăng ký",
+        name="Hạn chót đăng ký",
         value=f"<t:{int(ml.signup_close_at(current).timestamp())}:F> (<t:{int(ml.signup_close_at(current).timestamp())}:R>)",
         inline=False,
     )
-    embed.add_field(name="🧬 Team building", value=RULES_TEAM, inline=False)
+    embed.add_field(name=" Team building", value=RULES_TEAM, inline=False)
     embed.set_footer(
-        text="Bấm nút để đăng ký — bấm lại (hoặc nút Hủy) để hủy. Tin tự nhắc lại mỗi 8 giờ."
+        text="Bấm nút để đăng ký — bấm lại để hủy. Tin tự nhắc lại mỗi 8 tiếng."
     )
     return embed
 
@@ -247,10 +247,10 @@ def _registration_text(state, current):
     close_at = int(ml.signup_close_at(current).timestamp())
     return (
         f"**Đăng kí thách đấu Gym Leader - WL{wl}**\n"
-        f"👑 Gym Leader: {ml.leader_term_text(state)}\n"
-        f"👥 Đã đăng ký ({len(registrations)}): {shown}\n"
-        f"⏰ Chốt đăng ký: <t:{close_at}:F> (<t:{close_at}:R>)\n"
-        f"🧬 Team building:\n{RULES_TEAM}\n"
+        f"Gym Leader: {ml.leader_term_text(state)}\n"
+        f"Đã đăng ký ({len(registrations)}): {shown}\n"
+        f"Hạn đăng ký: <t:{close_at}:F> (<t:{close_at}:R>)\n"
+        f"Team building:\n{RULES_TEAM}\n"
         "Bấm nút để đăng ký / hủy. Xem đầy đủ luật bằng `/luat`."
     )[:2000]
 
@@ -340,12 +340,12 @@ def _draw_embed(kind, payload):
     else:  # draw_final
         a, b = payload["players"]
         embed = discord.Embed(
-            title=f"👑 CHUNG KẾT BO3 — WL{wl}",
+            title=f"CHUNG KẾT BO3 — WL{wl}",
             color=0xF1C40F,
             description=(
                 f"**<@{a}> vs <@{b}>**\n"
                 "Hai Trainer đấu **BO3** để giành slot Gym Leader tuần sau.\n"
-                "Người thắng nhậm chức lúc **00:00 Thứ 2**."
+                "Người thắng nhận chức lúc **00:00 Thứ 2**."
             ),
         )
         skipped = [uid for uid in payload.get("pool", []) if uid not in payload["players"]]
