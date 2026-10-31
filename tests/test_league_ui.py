@@ -1,4 +1,4 @@
-"""Test các thành phần UI của chat riêng (không cần kết nối Discord)."""
+"""Test các thành phần UI của cog League (không cần kết nối Discord)."""
 
 import asyncio
 import os
@@ -13,60 +13,102 @@ PLAYER_A = 2001
 PLAYER_B = 2002
 
 
-def match_state(phase="qualifier"):
+def match_state(best_of=1, phase="qualifier"):
     state = ml.merge_defaults({})
-    state["week"]["week_id"] = "2026-W45"
-    state["week"]["phase"] = phase
-    if phase == "qualifier":
-        state["week"]["qualifier"] = {"players": [PLAYER_A, PLAYER_B], "best_of": 1}
-    else:
-        state["week"]["title"] = {
-            "challenger_id": PLAYER_A,
-            "leader_id": PLAYER_B,
-            "best_of": 3,
-        }
-    return state
+    state["tournament"].update({
+        "wl": 3,
+        "week_id": "2026-W46",
+        "phase": phase,
+        "start": ml.now().isoformat(),
+        "players": [PLAYER_A, PLAYER_B],
+    })
+    match = {
+        "id": 7,
+        "phase": phase,
+        "round": 1,
+        "players": [PLAYER_A, PLAYER_B],
+        "best_of": best_of,
+        "status": "open",
+        "thread_id": None,
+        "submissions": {},
+        "created_at": ml.now().isoformat(),
+        "ended_at": None,
+        "winner_id": None,
+        "loser_id": None,
+    }
+    state["tournament"]["matches"]["7"] = match
+    return state, match
 
 
-def test_submit_view_uses_static_custom_id():
-    view = league._submit_view()
-    assert [child.custom_id for child in view.children] == ["league:submit"]
+def test_submit_view_encodes_match_id():
+    view = league._submit_view(7)
+    assert [child.custom_id for child in view.children] == ["league:submit:7"]
 
 
-def test_confirm_view_encodes_phase_and_submitter():
-    view = league._confirm_view("title", 42)
+def test_confirm_view_encodes_match_and_submitter():
+    view = league._confirm_view(7, 42)
     assert [child.custom_id for child in view.children] == [
-        "league:confirm:title:42",
-        "league:dispute:title:42",
+        "league:confirm:7:42",
+        "league:dispute:7:42",
     ]
 
 
 def test_thread_panel_shows_players_and_rules():
-    embed = league._thread_panel(match_state("qualifier"), "qualifier")
+    state, match = match_state(1, "qualifier")
+    embed = league._thread_panel(state, match)
     assert "BO1" in embed.title
     assert f"<@{PLAYER_A}>" in embed.description
     assert "1-0" in embed.description
+    assert any("Hạn chót" in field.name for field in embed.fields)
 
-    embed = league._thread_panel(match_state("title"), "title")
+    state, match = match_state(3, "final")
+    embed = league._thread_panel(state, match)
     assert "BO3" in embed.title
     assert "2-1" in embed.description
 
 
 def test_score_modal_fields():
-    modal = league.ScoreModal("title")
-    assert modal.phase == "title"
+    modal = league.ScoreModal(3, 7)
+    assert modal.match_id == 7
+    assert modal.best_of == 3
     assert len(modal.children) == 2
     assert "BO3" in modal.children[0].label
+
+    modal = league.ScoreModal(1, 9)
+    assert "BO1" in modal.children[0].label
 
 
 def test_registration_panel_title_uses_wl_number():
     state = ml.merge_defaults({})
-    state["week"].update({"week_id": "2026-W45", "wl": 7, "phase": "open"})
+    state["signup"].update({"wl": 7, "week_id": "2026-W45", "open": True})
 
     embed = league._registration_embed(state, ml.now())
 
     assert embed.title == "Đăng kí thách đấu Gym Leader - WL7"
-    assert "00:00 thứ 2" in embed.description
+    assert "00:00 Thứ 2" in embed.description
+    assert "3/6" in str([field.value for field in embed.fields])
+
+
+def test_rules_embeds_contain_gym_rules():
+    embeds = league.rules_embeds()
+    text = " ".join(
+        [embed.description or "" for embed in embeds]
+        + [field.value for embed in embeds for field in embed.fields]
+    )
+    assert "3/6" in text
+    assert "2/6" in text
+    assert "BO1" in text
+    assert "BO3" in text
+    assert "00:00 Thứ 5" in text
+    assert "Shiny" in text
+    assert "miễn phí" in text
+
+
+def test_draw_embed_marks_priority_players():
+    payload = {"wl": 4, "players": [PLAYER_A, PLAYER_B], "pool": [PLAYER_A, PLAYER_B, 2003], "match_id": 9}
+    embed = league._draw_embed("draw_final", payload)
+    assert f"<@{PLAYER_A}>" in embed.description
+    assert "2003" in str([field.value for field in embed.fields])
 
 
 def test_unregister_and_reset_views():
