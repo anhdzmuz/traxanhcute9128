@@ -15,7 +15,7 @@ import match_logic as ml
 log = logging.getLogger(__name__)
 
 OWNER_ID = 1031799680792809522
-GYM_CHANNEL_ID = 1147411953501880390
+GYM_CHANNEL_ID = 1565716218084855959
 
 # Kênh chứa chat riêng của từng trận. Đặt biến môi trường MATCH_CHANNEL_ID để
 # đổi; không đặt thì dùng luôn kênh Gym.
