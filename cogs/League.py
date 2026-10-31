@@ -64,6 +64,7 @@ async def get_channel(client, channel_id):
 
 # Quyền bot cần trong kênh Gym (không cần Administrator).
 PANEL_PERMS = {
+    "view_channel": "View Channel",
     "send_messages": "Send Messages",
     "embed_links": "Embed Links",
     "attach_files": "Attach Files",
@@ -71,6 +72,7 @@ PANEL_PERMS = {
 }
 
 THREAD_PERMS = {
+    "view_channel": "View Channel",
     "create_private_threads": "Create Private Threads",
     "send_messages_in_threads": "Send Messages in Threads",
     "manage_threads": "Manage Threads",
@@ -106,7 +108,7 @@ async def send_panel(channel, **kwargs):
 
 
 def _overwrite_lines(channel, required=None):
-    """Các channel override ảnh hưởng tới bot (@everyone và role của bot)."""
+    """Các channel override ảnh hưởng tới bot (@everyone, role và chính bot)."""
     required = required or PANEL_PERMS
     guild = getattr(channel, "guild", None)
     me = getattr(guild, "me", None)
@@ -116,11 +118,17 @@ def _overwrite_lines(channel, required=None):
     for target, overwrite in channel.overwrites.items():
         is_everyone = isinstance(target, discord.Role) and target.is_default()
         is_mine = isinstance(target, discord.Role) and target in me.roles
-        if not (is_everyone or is_mine):
+        is_bot = isinstance(target, discord.Member) and target.id == getattr(me, "id", None)
+        if not (is_everyone or is_mine or is_bot):
             continue
         allow = [name for attr, name in required.items() if getattr(overwrite, attr, None) is True]
         deny = [name for attr, name in required.items() if getattr(overwrite, attr, None) is False]
-        label = "@everyone" if is_everyone else f"@{target.name}"
+        if is_everyone:
+            label = "@everyone"
+        elif is_bot:
+            label = f"@{target.name} (bot)"
+        else:
+            label = f"@{target.name}"
         lines.append(f"`{label}` → ✅ {', '.join(allow) or '—'} · ⛔ {', '.join(deny) or '—'}")
     return lines
 
