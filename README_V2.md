@@ -81,6 +81,7 @@ Người được chọn thì ưu tiên về 0.
 - `/gan_leader member:@X` — gán Gym Leader thủ công cho tuần sau.
 - `/huy_giai` — hủy giải đang chạy, gia hạn Leader.
 - `/tao_dang_ky` — đăng lại tin đăng ký ngay (tự mở lại đăng ký nếu đang đóng).
+- `/kiem_tra_quyen` — xem quyền **thực tế** bot đang có trong kênh Gym và kênh trận, kèm các channel override đang chặn.
 - `/reset` — **xóa toàn bộ dữ liệu bot**, xác nhận 2 lần. Sau khi reset, panel **WL1** tự mở trong ~2 phút.
 
 ## Cấu hình
@@ -104,6 +105,10 @@ Không cần Administrator. Chỉ trên kênh trận đấu (`MATCH_CHANNEL_ID`)
 - `Attach Files` — đăng lại ảnh minh chứng ra kênh chính.
 
 Kênh chính chỉ cần `Send Messages` + `Embed Links` (+ `Attach Files` nếu muốn giữ ảnh minh chứng).
+
+> ⚠️ Quyền ở cấp server **không thắng** channel override. Nếu `@everyone` bị **Deny** `Send Messages` trong kênh, phải thêm **Allow** cho role của bot ngay trong `Edit Channel → Permissions`. Dùng `/kiem_tra_quyen` để xem bot đang thiếu gì.
+
+Panel được gửi ở chế độ im lặng (`silent`). Nếu Discord từ chối cờ này, bot tự gửi lại **không im lặng** thay vì báo lỗi.
 
 ## Cấu trúc
 

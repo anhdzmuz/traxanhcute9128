@@ -93,6 +93,38 @@ def missing_permissions(channel, required=None):
     ]
 
 
+async def send_panel(channel, **kwargs):
+    """Gửi tin im lặng; nếu Discord chặn cờ `silent` thì gửi bình thường."""
+    try:
+        return await channel.send(silent=True, **kwargs)
+    except discord.Forbidden as exc:
+        log.warning("Không gửi được tin 'silent' (%s) — thử lại không silent", exc)
+        try:
+            return await channel.send(**kwargs)
+        except discord.Forbidden:
+            raise exc from None
+
+
+def _overwrite_lines(channel, required=None):
+    """Các channel override ảnh hưởng tới bot (@everyone và role của bot)."""
+    required = required or PANEL_PERMS
+    guild = getattr(channel, "guild", None)
+    me = getattr(guild, "me", None)
+    if me is None or not hasattr(channel, "overwrites"):
+        return []
+    lines = []
+    for target, overwrite in channel.overwrites.items():
+        is_everyone = isinstance(target, discord.Role) and target.is_default()
+        is_mine = isinstance(target, discord.Role) and target in me.roles
+        if not (is_everyone or is_mine):
+            continue
+        allow = [name for attr, name in required.items() if getattr(overwrite, attr, None) is True]
+        deny = [name for attr, name in required.items() if getattr(overwrite, attr, None) is False]
+        label = "@everyone" if is_everyone else f"@{target.name}"
+        lines.append(f"`{label}` → ✅ {', '.join(allow) or '—'} · ⛔ {', '.join(deny) or '—'}")
+    return lines
+
+
 # --------------------------------------------------------------------------- #
 # Luật của Gym (hiển thị trong panel và /luat)
 # --------------------------------------------------------------------------- #
@@ -591,8 +623,8 @@ class League(commands.Cog):
         data = await read_data(fresh=True)
 
         if kind == "open":
-            message = await channel.send(
-                embed=_registration_embed(data, current), view=RegisterView(), silent=True
+            message = await send_panel(
+                channel, embed=_registration_embed(data, current), view=RegisterView()
             )
             await update_data(lambda d: d["signup"].__setitem__("message_id", message.id))
             return
@@ -600,8 +632,8 @@ class League(commands.Cog):
         if kind == "repost":
             # Đăng lại panel mỗi 8 giờ; bản cũ mất nút để không ai bấm nhầm.
             await self._retire_message(channel, data["signup"].get("message_id"))
-            message = await channel.send(
-                embed=_registration_embed(data, current), view=RegisterView(), silent=True
+            message = await send_panel(
+                channel, embed=_registration_embed(data, current), view=RegisterView()
             )
             await update_data(lambda d: d["signup"].__setitem__("message_id", message.id))
             return
@@ -1280,8 +1312,8 @@ class League(commands.Cog):
                     f"Không tìm thấy kênh Gym (`{GYM_CHANNEL_ID}`).", ephemeral=True
                 )
             await self._retire_message(channel, data["signup"].get("message_id"))
-            message = await channel.send(
-                embed=_registration_embed(data, ml.now()), view=RegisterView(), silent=True
+            message = await send_panel(
+                channel, embed=_registration_embed(data, ml.now()), view=RegisterView()
             )
             await update_data(lambda d: d["signup"].__setitem__("message_id", message.id))
         except discord.Forbidden:
@@ -1291,7 +1323,7 @@ class League(commands.Cog):
             return await interaction.followup.send(
                 f"Bot thiếu quyền trong kênh <#{GYM_CHANNEL_ID}>: **{detail}**.\n"
                 "Cấp ở **Edit Channel → Permissions** cho role của bot (hoặc mời lại bot "
-                "bằng link có đủ quyền).",
+                "bằng link có đủ quyền).\nDùng `/kiem_tra_quyen` để xem bot đang bị chặn ở đâu.",
                 ephemeral=True,
             )
         except Exception as exc:  # noqa: BLE001 - owner cần thấy lỗi thật để báo lại
@@ -1303,6 +1335,50 @@ class League(commands.Cog):
         await interaction.followup.send(
             f"Đã đăng tin đăng ký **WL{data['signup'].get('wl') or 1}**.", ephemeral=True
         )
+
+    @app_commands.command(
+        name="kiem_tra_quyen",
+        description="[OWNER] Kiểm tra quyền thật của bot trong kênh Gym và kênh trận.",
+    )
+    @is_gym_channel()
+    async def kiem_tra_quyen(self, interaction: discord.Interaction):
+        if not is_owner(interaction.user.id):
+            return await interaction.response.send_message(
+                "Chỉ người quản lý Gym mới dùng được lệnh này.", ephemeral=True
+            )
+        await interaction.response.defer(ephemeral=True)
+        embed = discord.Embed(
+            title="🔐 KIỂM TRA QUYỀN BOT",
+            color=0x5865F2,
+            description=(
+                "Đây là quyền **thực tế** bot đang có (đã tính cả channel override).\n"
+                "❌ = phải cấp ở **Edit Channel → Permissions** cho role của bot."
+            ),
+        )
+        for label, channel_id, required in (
+            ("Kênh Gym", GYM_CHANNEL_ID, PANEL_PERMS),
+            ("Kênh trận", MATCH_CHANNEL_ID, THREAD_PERMS),
+        ):
+            channel = await get_channel(self.bot, channel_id)
+            if channel is None:
+                embed.add_field(
+                    name=label, value=f"❌ Không tìm thấy kênh `{channel_id}`.", inline=False
+                )
+                continue
+            me = getattr(getattr(channel, "guild", None), "me", None)
+            perms = channel.permissions_for(me) if me is not None else None
+            lines = [f"Kênh: {channel.mention}"]
+            for attr, name in required.items():
+                ok = bool(perms and getattr(perms, attr, False))
+                lines.append(f"{'✅' if ok else '❌'} {name}")
+            if me is not None:
+                lines.append(
+                    f"Role cao nhất của bot: **{me.top_role.name}** "
+                    f"(vị trí {me.top_role.position})"
+                )
+            lines.extend(_overwrite_lines(channel, required))
+            embed.add_field(name=label, value="\n".join(lines)[:1024], inline=False)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(
         name="bat_dau", description="[OWNER] Chốt đăng ký và mở giải ngay (để test)."
