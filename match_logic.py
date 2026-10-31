@@ -830,6 +830,25 @@ def _open_signup(state, current):
     return {"wl": state["wl_seq"], "week_id": week_id(current)}
 
 
+def force_open_signup(state, current):
+    """[OWNER] Mở lại đăng ký của tuần hiện tại (dùng cho /tao_dang_ky).
+
+    Không đụng tới giải đang chạy; chỉ đảm bảo panel đăng ký dùng được ngay,
+    kể cả khi vừa /reset hoặc bot vừa khởi động lại giữa tuần.
+    """
+    signup = state["signup"]
+    if not signup.get("week_id"):
+        # Trạng thái mới tinh (sau /reset): mở luôn WL đầu tiên.
+        if not signup.get("wl"):
+            state["wl_seq"] = int(state.get("wl_seq") or 0) + 1
+            signup["wl"] = state["wl_seq"]
+        signup["week_id"] = week_id(current)
+    signup["open"] = True
+    signup["repost_at"] = current.isoformat()
+    signup.setdefault("registrations", [])
+    return state
+
+
 def _begin_tournament(state, registrations, current, rng, wl):
     """Chốt danh sách đăng ký và mở giải. Trả về danh sách action."""
     actions = []
