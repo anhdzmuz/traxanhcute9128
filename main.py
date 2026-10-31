@@ -17,7 +17,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Thánh Địa Bóng Đêm đang hoạt động ổn định!"
+    return "Working.."
 
 
 def run_web():
