@@ -211,3 +211,53 @@ def test_missing_permissions_lists_only_missing_ones():
 
     no_guild = FakeChannel([])
     assert league.missing_permissions(no_guild) == []
+
+
+class FakeResponse:
+    status = 403
+    reason = "Forbidden"
+
+
+def forbidden_error():
+    return league.discord.Forbidden(
+        FakeResponse(), {"message": "Missing Permissions", "code": 50013}
+    )
+
+
+class SendChannel:
+    """Kênh giả: lần gửi có `silent` sẽ bị Forbidden nếu `block_silent`."""
+
+    def __init__(self, block_silent=True):
+        self.block_silent = block_silent
+        self.calls = []
+
+    async def send(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs.get("silent") and self.block_silent:
+            raise forbidden_error()
+        return "message"
+
+
+def test_send_panel_falls_back_when_silent_is_blocked():
+    channel = SendChannel()
+    assert asyncio.run(league.send_panel(channel, content="xin chào")) == "message"
+    assert len(channel.calls) == 2
+    assert channel.calls[0]["silent"] is True
+    assert "silent" not in channel.calls[1]
+
+
+def test_send_panel_reraises_forbidden_when_both_attempts_fail():
+    channel = SendChannel()
+
+    async def always_forbidden(**kwargs):
+        channel.calls.append(kwargs)
+        raise forbidden_error()
+
+    channel.send = always_forbidden
+    try:
+        asyncio.run(league.send_panel(channel, content="xin chào"))
+    except league.discord.Forbidden:
+        pass
+    else:  # pragma: no cover - chỉ chạy khi hành vi sai
+        raise AssertionError("phải ném lại Forbidden")
+    assert len(channel.calls) == 2
