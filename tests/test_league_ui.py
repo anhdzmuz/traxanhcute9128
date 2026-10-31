@@ -202,12 +202,21 @@ class FakePermChannel:
 
 def test_missing_permissions_lists_only_missing_ones():
     ok = FakePermChannel(
-        send_messages=True, embed_links=True, attach_files=True, read_message_history=True
+        view_channel=True,
+        send_messages=True,
+        embed_links=True,
+        attach_files=True,
+        read_message_history=True,
     )
     assert league.missing_permissions(ok) == []
 
-    bad = FakePermChannel(send_messages=True, embed_links=False, attach_files=True)
+    bad = FakePermChannel(
+        view_channel=True, send_messages=True, embed_links=False, attach_files=True
+    )
     assert league.missing_permissions(bad) == ["Embed Links", "Read Message History"]
+
+    no_view = FakePermChannel(send_messages=True)
+    assert league.missing_permissions(no_view)[0] == "View Channel"
 
     no_guild = FakeChannel([])
     assert league.missing_permissions(no_guild) == []
