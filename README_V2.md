@@ -108,7 +108,7 @@ Kênh chính chỉ cần `Send Messages` + `Embed Links` (+ `Attach Files` nếu
 
 > ⚠️ Quyền ở cấp server **không thắng** channel override. Nếu `@everyone` bị **Deny** `Send Messages` trong kênh, phải thêm **Allow** cho role của bot ngay trong `Edit Channel → Permissions`. Dùng `/kiem_tra_quyen` để xem bot đang thiếu gì.
 
-Panel được gửi ở chế độ im lặng (`silent`). Nếu Discord từ chối cờ này, bot tự gửi lại **không im lặng** thay vì báo lỗi.
+Panel được gửi ở chế độ im lặng (`silent`). Nếu Discord từ chối cờ này, bot tự gửi lại **không im lặng**; nếu kênh chặn **Embed Links**, bot gửi panel dạng **chữ** (vẫn có nút đăng ký) thay vì báo lỗi.
 
 ## Cấu trúc
 
