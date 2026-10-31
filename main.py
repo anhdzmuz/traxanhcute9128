@@ -7,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 from flask import Flask
 
-from cogs.core import GYM_CHANNEL_ID, initialize_storage
+from cogs.core import GYM_CHANNEL_ID, initialize_storage, is_owner
 
 log = logging.getLogger(__name__)
 
@@ -40,8 +40,12 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         text = f"Lệnh này chỉ dùng được trong kênh <#{GYM_CHANNEL_ID}>."
     else:
         command = interaction.command.qualified_name if interaction.command else "?"
-        log.error("Lỗi khi chạy lệnh /%s", command, exc_info=error)
+        original = getattr(error, "original", error)
+        log.error("Lỗi khi chạy lệnh /%s", command, exc_info=original)
         text = "Có lỗi xảy ra khi xử lý lệnh. Hãy thử lại sau."
+        # Owner thấy nguyên nhân thật để báo lại, người chơi chỉ thấy thông báo chung.
+        if is_owner(interaction.user.id):
+            text += f"\n`{type(original).__name__}: {str(original)[:300]}`"
     try:
         if interaction.response.is_done():
             await interaction.followup.send(text, ephemeral=True)
