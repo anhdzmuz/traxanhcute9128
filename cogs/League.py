@@ -129,7 +129,9 @@ def _overwrite_lines(channel, required=None):
             label = f"@{target.name} (bot)"
         else:
             label = f"@{target.name}"
-        lines.append(f"`{label}` → ✅ {', '.join(allow) or '—'} · ⛔ {', '.join(deny) or '—'}")
+        lines.append(
+            f"`{label}` → CHO PHÉP: {', '.join(allow) or '—'} | CHẶN: {', '.join(deny) or '—'}"
+        )
     return lines
 
 
@@ -232,6 +234,41 @@ def _registration_embed(state, current):
 _REFRESH_AT = {}
 # match_id -> lần cuối thử tạo chat riêng, tránh spam khi thiếu quyền.
 _THREAD_RETRY = {}
+
+
+def _registration_text(state, current):
+    """Bản chữ của panel, dùng khi kênh chặn Embed Links."""
+    signup = state["signup"]
+    wl = signup.get("wl") or 1
+    registrations = signup["registrations"]
+    shown = ", ".join(f"<@{uid}>" for uid in registrations[:15]) or "*Chưa có ai*"
+    if len(registrations) > 15:
+        shown += f" … (+{len(registrations) - 15})"
+    close_at = int(ml.signup_close_at(current).timestamp())
+    return (
+        f"**Đăng kí thách đấu Gym Leader - WL{wl}**\n"
+        f"👑 Gym Leader: {ml.leader_term_text(state)}\n"
+        f"👥 Đã đăng ký ({len(registrations)}): {shown}\n"
+        f"⏰ Chốt đăng ký: <t:{close_at}:F> (<t:{close_at}:R>)\n"
+        f"🧬 Team building:\n{RULES_TEAM}\n"
+        "Bấm nút để đăng ký / hủy. Xem đầy đủ luật bằng `/luat`."
+    )[:2000]
+
+
+async def send_registration_panel(channel, state, current):
+    """Gửi panel đăng ký; nếu kênh chặn embed thì gửi bản chữ để vẫn dùng được."""
+    try:
+        return await send_panel(
+            channel, embed=_registration_embed(state, current), view=RegisterView()
+        )
+    except discord.Forbidden as exc:
+        log.warning("Kênh chặn embed (%s) — gửi panel dạng chữ", exc)
+        try:
+            return await channel.send(
+                content=_registration_text(state, current), view=RegisterView()
+            )
+        except discord.Forbidden:
+            raise exc from None
 
 
 async def refresh_registration(client):
@@ -631,18 +668,14 @@ class League(commands.Cog):
         data = await read_data(fresh=True)
 
         if kind == "open":
-            message = await send_panel(
-                channel, embed=_registration_embed(data, current), view=RegisterView()
-            )
+            message = await send_registration_panel(channel, data, current)
             await update_data(lambda d: d["signup"].__setitem__("message_id", message.id))
             return
 
         if kind == "repost":
             # Đăng lại panel mỗi 8 giờ; bản cũ mất nút để không ai bấm nhầm.
             await self._retire_message(channel, data["signup"].get("message_id"))
-            message = await send_panel(
-                channel, embed=_registration_embed(data, current), view=RegisterView()
-            )
+            message = await send_registration_panel(channel, data, current)
             await update_data(lambda d: d["signup"].__setitem__("message_id", message.id))
             return
 
@@ -1320,9 +1353,7 @@ class League(commands.Cog):
                     f"Không tìm thấy kênh Gym (`{GYM_CHANNEL_ID}`).", ephemeral=True
                 )
             await self._retire_message(channel, data["signup"].get("message_id"))
-            message = await send_panel(
-                channel, embed=_registration_embed(data, ml.now()), view=RegisterView()
-            )
+            message = await send_registration_panel(channel, data, ml.now())
             await update_data(lambda d: d["signup"].__setitem__("message_id", message.id))
         except discord.Forbidden:
             log.exception("Thiếu quyền khi đăng panel đăng ký")
@@ -1360,7 +1391,7 @@ class League(commands.Cog):
             color=0x5865F2,
             description=(
                 "Đây là quyền **thực tế** bot đang có (đã tính cả channel override).\n"
-                "❌ = phải cấp ở **Edit Channel → Permissions** cho role của bot."
+                "Dòng `THIẾU` = phải cấp ở **Edit Channel → Permissions** cho role của bot."
             ),
         )
         for label, channel_id, required in (
@@ -1370,7 +1401,9 @@ class League(commands.Cog):
             channel = await get_channel(self.bot, channel_id)
             if channel is None:
                 embed.add_field(
-                    name=label, value=f"❌ Không tìm thấy kênh `{channel_id}`.", inline=False
+                    name=label,
+                    value=f"THIẾU — không tìm thấy kênh `{channel_id}`.",
+                    inline=False,
                 )
                 continue
             me = getattr(getattr(channel, "guild", None), "me", None)
@@ -1378,7 +1411,7 @@ class League(commands.Cog):
             lines = [f"Kênh: {channel.mention}"]
             for attr, name in required.items():
                 ok = bool(perms and getattr(perms, attr, False))
-                lines.append(f"{'✅' if ok else '❌'} {name}")
+                lines.append(f"{'OK  ' if ok else 'THIẾU'} — {name}")
             if me is not None:
                 lines.append(
                     f"Role cao nhất của bot: **{me.top_role.name}** "

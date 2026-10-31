@@ -270,3 +270,41 @@ def test_send_panel_reraises_forbidden_when_both_attempts_fail():
     else:  # pragma: no cover - chỉ chạy khi hành vi sai
         raise AssertionError("phải ném lại Forbidden")
     assert len(channel.calls) == 2
+
+
+def test_registration_text_fallback_mentions_wl_and_count():
+    state = ml.reset_state()
+    ml.force_open_signup(state, ml.now())
+
+    text = league._registration_text(state, ml.now())
+
+    assert "Đăng kí thách đấu Gym Leader - WL1" in text
+    assert "Đã đăng ký (0)" in text
+    assert len(text) <= 2000
+
+
+class EmbedBlockingChannel:
+    """Kênh chặn Embed Links: mọi tin có embed đều 403."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def send(self, **kwargs):
+        self.calls.append(kwargs)
+        if "embed" in kwargs:
+            raise forbidden_error()
+        return "message"
+
+
+def test_send_registration_panel_falls_back_to_plain_text():
+    state = ml.reset_state()
+    ml.force_open_signup(state, ml.now())
+    channel = EmbedBlockingChannel()
+
+    result = asyncio.run(league.send_registration_panel(channel, state, ml.now()))
+
+    assert result == "message"
+    assert len(channel.calls) == 3
+    assert channel.calls[0].get("embed") is not None
+    assert channel.calls[-1].get("content")
+    assert "embed" not in channel.calls[-1]
