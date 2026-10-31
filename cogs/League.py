@@ -1,11 +1,14 @@
-"""Giải đấu hàng tuần tranh chức Gym Leader.
+"""Giải đấu hàng tuần tranh chức Gym Leader (Gym Dark TGA).
 
-Luồng một tuần:
-  Thứ 2 00:00  mở đăng ký (im lặng) + nút Đăng ký
-  CN   00:00   bốc thăm (im lặng)
-  CN   06:00   thông báo lại (im lặng)
-  CN   18:00   ping nhắc
-  CN   23:59   hạn chót nhận kết quả
+Mỗi giải chạy trong 1 tuần:
+
+  Thứ 2 00:00   chốt đăng ký tuần trước, mở giải + panel WL mới
+  Thứ 2 – Thứ 4 vòng loại BO1, mỗi người đấu 1 trận; ai thắng (hoặc lẻ cặp) đi tiếp
+  Thứ 5 00:00   cặp nào chưa báo kết quả -> loại cả 2
+  Thứ 5 – Thứ 7 ghép cặp lần 2, chốt danh sách random
+  CN    00:00   random 2 Trainer vào chung kết
+  CN            chung kết BO3
+  Thứ 2 00:00   người thắng nhậm chức Gym Leader
 
 Toàn bộ luật nằm trong `match_logic.py`; cog này chỉ lo Discord.
 """
@@ -59,20 +62,82 @@ async def get_channel(client, channel_id):
     return channel
 
 
+# --------------------------------------------------------------------------- #
+# Luật của Gym (hiển thị trong panel và /luat)
+# --------------------------------------------------------------------------- #
+
+RULES_TEAM = (
+    "• Tối thiểu **3/6 Pokémon hệ Dark** trong team.\n"
+    "• Chỉ dùng **1 team cố định** trong tuần đấu đó — không đổi Pokémon giữa các vòng.\n"
+    "• **Hybrid team sheet:** bạn để lộ **2/6** Pokémon của mình.\n"
+    "• Cơ chế cấm chọn: *Updating…*"
+)
+
+RULES_FORMAT = (
+    "**Vòng loại (BO1)** — Thứ 2 → 00:00 Thứ 5\n"
+    "• Ghép cặp ngẫu nhiên, mỗi người đấu **1 trận BO1**; ai thắng (hoặc lẻ cặp được đi tiếp) vào danh sách.\n"
+    "• Không báo kết quả trước **00:00 Thứ 5** → **loại cả 2**.\n\n"
+    "**Ghép cặp lần 2 (BO1)** — Thứ 5 → 00:00 Chủ Nhật\n"
+    "• Những người còn lại được ghép cặp lại; ai vào được vòng này đều nằm trong danh sách random.\n"
+    "• **00:00 Chủ Nhật** (hoặc sớm hơn khi mọi trận đã xong) bot random **2 Trainer** vào chung kết (ưu tiên cao → dễ được chọn hơn).\n"
+    "• Ai vào vòng này mà không được chọn → **+1 ưu tiên** cho lần sau.\n\n"
+    "**Chung kết (BO3)** — Chủ Nhật\n"
+    "• 2 Trainer đấu nhau để giành slot Gym Leader **tuần tiếp theo**.\n"
+    "• Người thắng nhậm chức lúc **00:00 Thứ 2**."
+)
+
+RULES_REWARD = (
+    "• Lệ phí tham gia: **miễn phí** (tạm thời).\n"
+    "• Lần đầu trở thành Gym Leader (thời vụ): được chọn **1 Pokémon Shiny** có trong kho của Gym.\n"
+    "• *Đang cập nhật…*"
+)
+
+RULES_NOTE = (
+    "• Bot tạo **chat riêng** cho từng cặp để hai bạn tự hẹn giờ.\n"
+    "• Đánh xong: gửi **ảnh chụp màn hình** vào chat riêng, bấm **📤 Nộp kết quả**, "
+    "đối thủ bấm **✅ Xác nhận**.\n"
+    "• Tỷ số nhập theo góc nhìn của bạn: BO1 `1-0` / `0-1`, BO3 `2-0` / `2-1` / `0-2` / `1-2`.\n"
+    "• Chat riêng tự xóa sau khi kết quả được xác nhận (ảnh minh chứng được đăng lại kèm kết quả)."
+)
+
+
+def rules_embeds():
+    """Toàn bộ luật của Gym, dùng cho /luat."""
+    intro = discord.Embed(
+        title="🏟️ Binh Đoàn Bóng Tối ┋ Gym Dark TGA",
+        color=0x2C3E50,
+        description=(
+            f"**Chủ Gym:** <@{OWNER_ID}>\n"
+            "Giải đấu tuần: thắng chung kết BO3 là thành Gym Leader tuần sau."
+        ),
+    )
+    intro.add_field(name="🧬 Team building", value=RULES_TEAM, inline=False)
+    format_embed = discord.Embed(title="📜 Thể thức thi đấu", color=0x5865F2, description=RULES_FORMAT)
+    format_embed.add_field(name="🎁 Phần thưởng", value=RULES_REWARD, inline=False)
+    format_embed.add_field(name="🤝 Cách báo kết quả", value=RULES_NOTE, inline=False)
+    format_embed.set_footer(text="Luật có thể cập nhật — bot sẽ thông báo khi thay đổi.")
+    return [intro, format_embed]
+
+
+# --------------------------------------------------------------------------- #
+# Panel đăng ký
+# --------------------------------------------------------------------------- #
+
 def _registration_embed(state, current):
-    week = state["week"]
-    wl = week.get("wl") or 1
+    signup = state["signup"]
+    wl = signup.get("wl") or 1
     embed = discord.Embed(
         title=f"Đăng kí thách đấu Gym Leader - WL{wl}",
         color=0x5865F2,
         description=(
-            "Đăng ký mở **cả tuần**, đóng lúc **00:00 Chủ Nhật**.\n"
-            "Bot bốc thăm **2 người** → đánh **BO1**.\n"
-            "Người thắng thách đấu **Gym Leader hiện tại** trong trận **BO3**.\n"
-            "Ai thắng BO3 sẽ nhậm chức Gym Leader vào **00:00 thứ 2 tuần sau**."
+            "Đăng ký mở **cả tuần**, chốt lúc **00:00 Thứ 2** rồi bước vào giải.\n"
+            "**Thứ 2 – Thứ 4:** vòng loại BO1 — mỗi người đấu 1 trận, ai thắng đi tiếp.\n"
+            "**Thứ 5 – Thứ 7:** ghép cặp lần 2, rồi random 2 Trainer vào chung kết.\n"
+            "**Chủ Nhật:** chung kết **BO3** — thắng là Gym Leader từ **00:00 Thứ 2** tuần sau.\n"
+            "Xem đầy đủ luật bằng `/luat`."
         ),
     )
-    registrations = week["registrations"]
+    registrations = signup["registrations"]
     if registrations:
         shown = ", ".join(f"<@{uid}>" for uid in registrations[:15])
         if len(registrations) > 15:
@@ -82,10 +147,11 @@ def _registration_embed(state, current):
     embed.add_field(name="👑 Gym Leader", value=ml.leader_term_text(state), inline=False)
     embed.add_field(name=f"👥 Đã đăng ký ({len(registrations)})", value=shown, inline=False)
     embed.add_field(
-        name="🎲 Bốc thăm",
-        value=f"<t:{int(ml.draw_at(current).timestamp())}:F> (<t:{int(ml.draw_at(current).timestamp())}:R>)",
+        name="⏰ Chốt đăng ký",
+        value=f"<t:{int(ml.signup_close_at(current).timestamp())}:F> (<t:{int(ml.signup_close_at(current).timestamp())}:R>)",
         inline=False,
     )
+    embed.add_field(name="🧬 Team building", value=RULES_TEAM, inline=False)
     embed.set_footer(
         text="Bấm nút để đăng ký — bấm lại (hoặc nút Hủy) để hủy. Tin tự nhắc lại mỗi 8 giờ."
     )
@@ -93,16 +159,16 @@ def _registration_embed(state, current):
 
 
 _REFRESH_AT = {}
-# (week_id, phase) -> lần cuối thử tạo chat riêng, tránh spam khi thiếu quyền.
+# match_id -> lần cuối thử tạo chat riêng, tránh spam khi thiếu quyền.
 _THREAD_RETRY = {}
 
 
 async def refresh_registration(client):
     """Sửa lại tin đăng ký để danh sách luôn đúng (tối đa 1 lần mỗi 3 giây)."""
     data = await read_data(fresh=True)
-    week = data["week"]
-    message_id = week.get("message_id")
-    if not message_id or week["phase"] != "open":
+    signup = data["signup"]
+    message_id = signup.get("message_id")
+    if not message_id or not signup.get("open"):
         return
     moment = time.monotonic()
     if moment - _REFRESH_AT.get(int(message_id), 0.0) < 3.0:
@@ -121,52 +187,77 @@ async def refresh_registration(client):
         pass
 
 
-def _draw_embed(state, current, kind, payload):
-    week = state["week"]
-    wl = week.get("wl") or 0
-    embed = discord.Embed(
-        title=f"🎲 KẾT QUẢ BỐC THĂM — WL{wl} ({week['week_id']})", color=0xE67E22
-    )
-    if kind == "pair":
+# --------------------------------------------------------------------------- #
+# Embed thông báo
+# --------------------------------------------------------------------------- #
+
+def _draw_embed(kind, payload):
+    """Embed cho kết quả ghép cặp / chốt danh sách."""
+    wl = payload.get("wl") or 0
+    if kind == "draw_qualifier":
+        embed = discord.Embed(
+            title=f"🎲 VÒNG LOẠI BO1 — WL{wl} · Vòng {payload['round']}",
+            color=0xE67E22,
+            description=(
+                "Bot ghép cặp ngẫu nhiên. Hai bạn tự hẹn giờ trong **chat riêng**.\n"
+                "**Không báo kết quả trước 00:00 Thứ 5 → loại cả 2.**"
+            ),
+        )
+        for pair in payload["pairs"]:
+            embed.add_field(name="⚔️ Cặp đấu", value=ml.match_line({"players": pair}), inline=False)
+        if payload.get("byes"):
+            embed.add_field(
+                name="🎫 Đi tiếp (lẻ cặp)",
+                value=", ".join(f"<@{uid}>" for uid in payload["byes"]),
+                inline=False,
+            )
+    elif kind == "draw_second":
+        embed = discord.Embed(
+            title=f"🎲 GHÉP CẶP LẦN 2 — WL{wl} · Vòng {payload['round']}",
+            color=0x9B59B6,
+            description=(
+                "Vòng loại đã khép lại. Bot ghép cặp lại để chốt danh sách random.\n"
+                "Khi các trận này xong (chậm nhất **00:00 Chủ Nhật**), bot random "
+                "**2 Trainer** vào chung kết."
+            ),
+        )
+        for pair in payload["pairs"]:
+            embed.add_field(name="⚔️ Cặp đấu", value=ml.match_line({"players": pair}), inline=False)
+        if payload.get("byes"):
+            embed.add_field(
+                name="🎫 Đi tiếp (lẻ cặp)",
+                value=", ".join(f"<@{uid}>" for uid in payload["byes"]),
+                inline=False,
+            )
+    else:  # draw_final
         a, b = payload["players"]
-        embed.description = (
-            f"**<@{a}> vs <@{b}>**\n"
-            "Trận **BO1**. Hai bạn tự thương lượng thời gian thi đấu.\n"
-            "Người thắng sẽ thách đấu Gym Leader trong trận **BO3**."
+        embed = discord.Embed(
+            title=f"👑 CHUNG KẾT BO3 — WL{wl}",
+            color=0xF1C40F,
+            description=(
+                f"**<@{a}> vs <@{b}>**\n"
+                "Hai Trainer đấu **BO3** để giành slot Gym Leader tuần sau.\n"
+                "Người thắng nhậm chức lúc **00:00 Thứ 2**."
+            ),
         )
-    elif kind == "single":
-        embed.description = (
-            f"Chỉ có **<@{payload['challenger_id']}>** đăng ký.\n"
-            f"Thách đấu trực tiếp Gym Leader <@{payload['leader_id']}> trong trận **BO3**."
-        )
-    elif kind == "crowned":
-        embed.description = (
-            f"Chưa có Gym Leader — **<@{payload['user_id']}>** sẽ nhậm chức "
-            "vào **00:00 thứ 2** tuần sau."
-        )
-    elif kind == "empty":
-        embed.description = "Không ai đăng ký. Gym Leader giữ chức và được gia hạn **1 tuần**."
-        embed.color = 0x95A5A6
-    embed.add_field(
-        name="⏰ Hạn chót",
-        value=f"<t:{int(ml.deadline_at(current).timestamp())}:F> (<t:{int(ml.deadline_at(current).timestamp())}:R>)",
-        inline=False,
-    )
+        skipped = [uid for uid in payload.get("pool", []) if uid not in payload["players"]]
+        if skipped:
+            embed.add_field(
+                name="➕ +1 ưu tiên lần sau",
+                value=", ".join(f"<@{uid}>" for uid in skipped),
+                inline=False,
+            )
     return embed
 
 
 def _match_mentions(state):
-    """Mention những người đang có trận, để tin ping thực sự kéo họ vào."""
-    week = state["week"]
-    if week["phase"] == "qualifier":
-        players = (week.get("qualifier") or {}).get("players", [])
-        return " vs ".join(f"<@{uid}>" for uid in players)
-    if week["phase"] == "title":
-        title = week.get("title") or {}
-        if title.get("challenger_id") and title.get("leader_id"):
-            return f"<@{title['challenger_id']}> vs <@{title['leader_id']}>"
-    return ""
+    lines = [ml.match_line(match) for match in ml.open_matches(state)]
+    return " · ".join(lines)
 
+
+# --------------------------------------------------------------------------- #
+# Ảnh minh chứng
+# --------------------------------------------------------------------------- #
 
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".bmp")
 
@@ -198,55 +289,64 @@ async def find_proof(channel, user_id, limit=60):
     return None
 
 
-def _thread_panel(state, phase):
-    best_of = "BO1" if phase == "qualifier" else "BO3"
-    players = ml.match_players(state)
+# --------------------------------------------------------------------------- #
+# View / modal
+# --------------------------------------------------------------------------- #
+
+def _thread_panel(state, match):
+    best_of = "BO3" if match["best_of"] == 3 else "BO1"
+    wl = state["tournament"].get("wl") or 0
+    a, b = match["players"]
+    scores = "`1-0` / `0-1`" if best_of == "BO1" else "`2-0` / `2-1` / `0-2` / `1-2`"
     embed = discord.Embed(
-        title=f"⚔️ {best_of} — TUẦN {state['week']['week_id']}",
+        title=f"⚔️ {best_of} — WL{wl} · Trận #{match['id']}",
         color=0x5865F2,
         description=(
-            "**" + " vs ".join(f"<@{uid}>" for uid in players) + "**\n\n"
-            "1️⃣ Đánh xong, gửi **ảnh chụp màn hình** kết quả vào chat này.\n"
-            "2️⃣ Một người bấm **📤 Nộp kết quả** và nhập tỷ số theo góc nhìn của mình.\n"
-            "3️⃣ Người còn lại bấm **✅ Xác nhận** (hoặc **❌ Không đúng**).\n\n"
-            f"Tỷ số hợp lệ: {'`1-0` / `0-1`' if phase == 'qualifier' else '`2-0` / `2-1` / `0-2` / `1-2`'}"
+            f"**<@{a}> vs <@{b}>**\n\n"
+            "1️⃣ Hai bạn tự hẹn giờ trong chat này.\n"
+            "2️⃣ Đánh xong, gửi **ảnh chụp màn hình** kết quả.\n"
+            "3️⃣ Một người bấm **📤 Nộp kết quả** và nhập tỷ số theo góc nhìn của mình.\n"
+            "4️⃣ Người còn lại bấm **✅ Xác nhận** (hoặc **❌ Không đúng**).\n\n"
+            f"Tỷ số hợp lệ: {scores}"
         ),
     )
-    embed.add_field(
-        name="⏰ Hạn chót",
-        value=f"<t:{int(ml.deadline_at(ml.now()).timestamp())}:F>",
-        inline=False,
-    )
+    deadline = ml.tournament_deadline(state["tournament"])
+    if deadline:
+        embed.add_field(
+            name="⏰ Hạn chót",
+            value=f"<t:{int(deadline.timestamp())}:F> (<t:{int(deadline.timestamp())}:R>)",
+            inline=False,
+        )
     embed.set_footer(text="Chat này sẽ bị xóa sau khi kết quả được xác nhận.")
     return embed
 
 
-def _submit_view():
+def _submit_view(match_id):
     view = discord.ui.View(timeout=None)
     view.add_item(
         discord.ui.Button(
             label="📤 Nộp kết quả",
             style=discord.ButtonStyle.primary,
-            custom_id="league:submit",
+            custom_id=f"league:submit:{match_id}",
         )
     )
     return view
 
 
-def _confirm_view(phase, submitter_id):
+def _confirm_view(match_id, submitter_id):
     view = discord.ui.View(timeout=None)
     view.add_item(
         discord.ui.Button(
             label="✅ Xác nhận",
             style=discord.ButtonStyle.success,
-            custom_id=f"league:confirm:{phase}:{submitter_id}",
+            custom_id=f"league:confirm:{match_id}:{submitter_id}",
         )
     )
     view.add_item(
         discord.ui.Button(
             label="❌ Không đúng",
             style=discord.ButtonStyle.danger,
-            custom_id=f"league:dispute:{phase}:{submitter_id}",
+            custom_id=f"league:dispute:{match_id}:{submitter_id}",
         )
     )
     return view
@@ -294,13 +394,14 @@ def _reset_view(step):
 
 
 class ScoreModal(discord.ui.Modal):
-    def __init__(self, phase):
+    def __init__(self, best_of, match_id):
         super().__init__(title="Nộp kết quả trận", timeout=300)
-        self.phase = phase
-        best_of = "BO1" if phase == "qualifier" else "BO3"
+        self.best_of = best_of
+        self.match_id = match_id
+        label = "BO3" if best_of == 3 else "BO1"
         self.score = discord.ui.TextInput(
-            label=f"Tỷ số {best_of} (theo góc nhìn của bạn)",
-            placeholder="1-0" if phase == "qualifier" else "2-1",
+            label=f"Tỷ số {label} (theo góc nhìn của bạn)",
+            placeholder="2-1" if best_of == 3 else "1-0",
             max_length=7,
         )
         self.note = discord.ui.TextInput(
@@ -315,17 +416,17 @@ class ScoreModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True, thinking=True)
         data = await read_data(fresh=True)
-        if data["week"]["phase"] != self.phase:
+        match = ml.get_match(data, self.match_id)
+        if not isinstance(match, dict) or match.get("status") != "open":
             return await interaction.followup.send(
                 "Trận này đã kết thúc hoặc đổi trạng thái.", ephemeral=True
             )
-        players = ml.match_players(data)
-        if interaction.user.id not in players:
+        if interaction.user.id not in match["players"]:
             return await interaction.followup.send(
                 "Bạn không có trong trận này.", ephemeral=True
             )
 
-        best_of = 1 if self.phase == "qualifier" else 3
+        best_of = int(match.get("best_of") or 1)
         if ml.parse_score(str(self.score), best_of) is None:
             rule = "1-0 hoặc 0-1" if best_of == 1 else "2-0, 2-1, 0-2 hoặc 1-2"
             return await interaction.followup.send(
@@ -342,7 +443,7 @@ class ScoreModal(discord.ui.Modal):
 
         status, payload = await update_data(
             lambda d: ml.submit_result(
-                d, interaction.user.id, str(self.score), proof, ml.now()
+                d, self.match_id, interaction.user.id, str(self.score), proof, ml.now()
             )
         )
         if status == "bad_score":
@@ -369,7 +470,7 @@ class ScoreModal(discord.ui.Modal):
         await interaction.channel.send(
             content=f"<@{payload['opponent_id']}> xác nhận giúp kết quả này.",
             embed=embed,
-            view=_confirm_view(self.phase, payload["submitter_id"]),
+            view=_confirm_view(payload["match_id"], payload["submitter_id"]),
         )
         await interaction.followup.send(
             "Đã ghi biên bản, chờ đối thủ xác nhận.", ephemeral=True
@@ -395,9 +496,7 @@ class RegisterView(discord.ui.View):
             lambda d: ml.toggle_registration(d, interaction.user.id, ml.now())
         )
         if status == "closed":
-            text = "Đăng ký tuần này đã đóng."
-        elif status == "leader":
-            text = "Gym Leader không đăng ký tranh chức của chính mình."
+            text = "Đăng ký tuần này đã chốt."
         elif status == "left":
             text = f"Đã hủy đăng ký. Còn {payload['count']} người."
         else:
@@ -423,7 +522,7 @@ class League(commands.Cog):
         self.weekly_loop.cancel()
 
     # ------------------------------------------------------------------ #
-    # Vòng lặp tuần
+    # Vòng lặp giải
     # ------------------------------------------------------------------ #
 
     @tasks.loop(minutes=2)
@@ -432,13 +531,10 @@ class League(commands.Cog):
             actions = await update_data(lambda d: ml.ensure_week(d, ml.now()))
             if actions:
                 await self._handle_actions(actions)
-            # Bot khởi động lại giữa trận: tạo lại chat riêng nếu bị mất.
-            data = await read_data(fresh=True)
-            phase = data["week"]["phase"]
-            if phase in ("qualifier", "title") and not (data["week"].get("threads") or {}).get(phase):
-                await self._ensure_thread(phase)
+            # Bot khởi động lại giữa giải: tạo lại chat riêng nếu bị mất.
+            await self._ensure_match_threads()
         except Exception:
-            log.exception("Lỗi trong vòng lặp giải đấu tuần")
+            log.exception("Lỗi trong vòng lặp giải đấu")
 
     @weekly_loop.before_loop
     async def before_weekly_loop(self):
@@ -460,23 +556,23 @@ class League(commands.Cog):
         data = await read_data(fresh=True)
 
         if kind == "open":
-            previous = payload.get("previous_message_id")
-            if previous:
-                # Tin đăng ký của tuần trước phải mất nút, tránh đăng ký nhầm tuần.
-                await self._close_registration(channel, previous)
             message = await channel.send(
                 embed=_registration_embed(data, current), view=RegisterView(), silent=True
             )
-            await update_data(lambda d: d["week"].__setitem__("message_id", message.id))
+            await update_data(lambda d: d["signup"].__setitem__("message_id", message.id))
             return
 
         if kind == "repost":
             # Đăng lại panel mỗi 8 giờ; bản cũ mất nút để không ai bấm nhầm.
-            await self._retire_message(channel, data["week"].get("message_id"))
+            await self._retire_message(channel, data["signup"].get("message_id"))
             message = await channel.send(
                 embed=_registration_embed(data, current), view=RegisterView(), silent=True
             )
-            await update_data(lambda d: d["week"].__setitem__("message_id", message.id))
+            await update_data(lambda d: d["signup"].__setitem__("message_id", message.id))
+            return
+
+        if kind == "close_signup":
+            await self._close_registration(channel, payload.get("message_id"))
             return
 
         if kind == "promote":
@@ -485,44 +581,72 @@ class League(commands.Cog):
                     f"👑 <@{payload['user_id']}> chính thức nhậm chức **Gym Leader** "
                     f"kể từ hôm nay. Chúc mừng!"
                 ),
-                embed=discord.Embed(
-                    description=ml.leader_term_text(data), color=0xF1C40F
-                ),
+                embed=discord.Embed(description=ml.leader_term_text(data), color=0xF1C40F),
             )
             return
 
-        if kind == "draw_pair":
-            await self._close_registration(channel)
-            thread = await self._ensure_thread("qualifier")
-            embed = _draw_embed(data, current, "pair", payload)
-            if thread is not None:
-                embed.add_field(name="💬 Chat riêng của trận", value=thread.mention, inline=False)
-            await channel.send(embed=embed, silent=True)
+        if kind in ("draw_qualifier", "draw_second", "draw_final"):
+            threads = await self._ensure_match_threads()
+            fresh = await read_data(fresh=True)
+            embed = _draw_embed(kind, payload)
+            if kind == "draw_final":
+                players = list(payload["players"])
+            else:
+                players = []
+                for match_id in payload.get("match_ids") or []:
+                    match = ml.get_match(fresh, match_id)
+                    if match:
+                        players.extend(match["players"])
+            mentions = " ".join(f"<@{uid}>" for uid in players)
+            if threads:
+                embed.add_field(
+                    name="💬 Chat riêng của trận",
+                    value="\n".join(f"<#{thread.id}>" for thread in threads.values()),
+                    inline=False,
+                )
+            await channel.send(content=mentions or None, embed=embed, silent=True)
             return
 
-        if kind == "draw_single":
-            await self._close_registration(channel)
-            thread = await self._ensure_thread("title")
-            embed = _draw_embed(data, current, "single", payload)
-            if thread is not None:
-                embed.add_field(name="💬 Chat riêng của trận", value=thread.mention, inline=False)
-            await channel.send(embed=embed, silent=True)
-            return
-
-        if kind == "draw_empty":
-            await self._close_registration(channel)
-            await channel.send(embed=_draw_embed(data, current, "empty", payload), silent=True)
-            return
-
-        if kind == "draw_crowned":
-            await self._close_registration(channel)
-            await channel.send(embed=_draw_embed(data, current, "crowned", payload))
-            return
-
-        if kind == "notice":
+        if kind == "eliminated":
+            pairs = ", ".join(
+                ml.match_line({"players": item["players"]}) for item in payload.get("matches") or []
+            )
             await channel.send(
-                content=f"⏰ Nhắc lại trận tranh chức Gym Leader tuần **{payload['week_id']}**.",
-                embed=discord.Embed(description=ml.week_summary(data, current), color=0x3498DB),
+                content=(
+                    f"⛔ Hết hạn báo kết quả — **loại cả 2**: {pairs}"
+                    if pairs else "⛔ Hết hạn báo kết quả."
+                ),
+                silent=True,
+            )
+            for item in payload.get("matches") or []:
+                if item.get("thread_id"):
+                    await self._delete_thread(item["thread_id"])
+            return
+
+        if kind in ("cancelled", "timeout", "final_timeout"):
+            if kind == "timeout":
+                text = "⏰ Giải tuần trước chưa xong khi bước sang tuần mới. Gym Leader giữ chức, gia hạn **1 tuần**."
+            elif kind == "final_timeout":
+                text = "⏰ Chung kết không có kết quả trước hạn. Gym Leader giữ chức, gia hạn **1 tuần**."
+            else:
+                text = "⚠️ Không đủ người để tiếp tục giải. Gym Leader giữ chức, gia hạn **1 tuần**."
+            await channel.send(text, silent=True)
+            for thread_id in payload.get("threads") or []:
+                await self._delete_thread(thread_id)
+            return
+
+        if kind == "walkover":
+            await channel.send(
+                content=(
+                    f"👑 Chỉ có <@{payload['user_id']}> đăng ký **WL{payload['wl']}** "
+                    "nên nhậm chức Gym Leader vào **00:00 Thứ 2**."
+                )
+            )
+            return
+
+        if kind == "no_signup":
+            await channel.send(
+                f"📭 Không ai đăng ký **WL{payload['wl']}**. Gym Leader giữ chức, gia hạn **1 tuần**.",
                 silent=True,
             )
             return
@@ -531,41 +655,21 @@ class League(commands.Cog):
             mentions = _match_mentions(data)
             prefix = f"{mentions} — " if mentions else ""
             await channel.send(
-                content=f"🔔 {prefix}Còn vài giờ để chốt kết quả tuần **{payload['week_id']}**.",
-                embed=discord.Embed(description=ml.week_summary(data, current), color=0xE74C3C),
+                content=f"🔔 {prefix}nhắc lịch thi đấu **WL{payload['wl']}**.",
+                embed=discord.Embed(description=ml.tournament_summary(data, current), color=0xE74C3C),
             )
-            return
-
-        if kind == "timeout":
-            await channel.send(
-                "⏰ Hết hạn nhận kết quả tuần này. Gym Leader giữ chức và được gia hạn **1 tuần**.",
-                silent=True,
-            )
-            for thread_id in payload.get("threads") or []:
-                await self._delete_thread(thread_id)
-            return
-
-        if kind == "missed":
-            await channel.send(
-                "⚠️ Bot không hoạt động vào Chủ Nhật nên tuần này không bốc thăm. "
-                "Gym Leader giữ chức, tuần sau mở lại bình thường.",
-                silent=True,
-            )
-            for thread_id in payload.get("threads") or []:
-                await self._delete_thread(thread_id)
 
     async def _close_registration(self, channel, message_id=None):
         if message_id is None:
             data = await read_data(fresh=True)
-            message_id = data["week"].get("message_id")
+            message_id = data["signup"].get("message_id")
         if not message_id:
             return
         try:
-            partial = channel.get_partial_message(int(message_id))
-            await partial.edit(
-                content="🔒 Đã đóng đăng ký tuần này.",
+            await channel.get_partial_message(int(message_id)).edit(
+                content="🔒 Đã chốt đăng ký — danh sách đã đưa vào giải.",
                 embed=discord.Embed(
-                    description="Đăng ký đã đóng. Kết quả bốc thăm ở tin nhắn bên dưới.",
+                    description="Đăng ký đã chốt. Kết quả ghép cặp ở tin nhắn bên dưới.",
                     color=0x95A5A6,
                 ),
                 view=None,
@@ -590,78 +694,78 @@ class League(commands.Cog):
             pass
 
     # ------------------------------------------------------------------ #
-    # Chat riêng của trận
+    # Chat riêng của từng trận
     # ------------------------------------------------------------------ #
 
-    async def _ensure_thread(self, phase):
-        """Tạo chat riêng cho trận nếu chưa có. Trả về Thread hoặc None."""
+    async def _ensure_match_threads(self):
+        """Tạo chat riêng cho mọi trận đang mở chưa có thread. Trả về {match_id: thread}."""
         data = await read_data(fresh=True)
-        week = data["week"]
-        if week["phase"] != phase:
-            return None
-        thread_id = (week.get("threads") or {}).get(phase)
-        if thread_id:
-            return await get_channel(self.bot, int(thread_id))
-
-        key = (week["week_id"], phase)
-        moment = time.monotonic()
-        if moment - _THREAD_RETRY.get(key, 0.0) < 600:
-            return None
-        if len(_THREAD_RETRY) > 100:
-            _THREAD_RETRY.clear()
-        _THREAD_RETRY[key] = moment
+        pending = [m for m in ml.open_matches(data) if not m.get("thread_id")]
+        created = {}
+        if not pending:
+            return created
 
         parent = await get_channel(self.bot, MATCH_CHANNEL_ID)
         if not isinstance(parent, discord.TextChannel):
             log.warning("Kênh trận đấu %s không phải text channel", MATCH_CHANNEL_ID)
-            return None
+            return created
 
         guild = parent.guild
-        players = ml.match_players(data)
-        members = []
-        for user_id in players:
-            member = guild.get_member(user_id)
-            if member is None:
-                try:
-                    member = await guild.fetch_member(user_id)
-                except discord.HTTPException:
-                    member = None
-            if member is not None:
-                members.append(member)
-
-        best_of = "BO1" if phase == "qualifier" else "BO3"
-        names = " vs ".join(member.display_name[:14] for member in members) or "Trận đấu"
-        try:
-            thread = await parent.create_thread(
-                name=f"⚔️ {week['week_id']} · {best_of} · {names}"[:95],
-                type=discord.ChannelType.private_thread,
-                invitable=False,
-                auto_archive_duration=1440,
-            )
-        except discord.HTTPException:
-            log.exception("Không tạo được chat riêng cho trận %s", phase)
-            return None
-
-        invited = list(members)
         owner = guild.get_member(OWNER_ID)
         if owner is None:
             try:
                 owner = await guild.fetch_member(OWNER_ID)
             except discord.HTTPException:
                 owner = None
-        if owner is not None and owner not in invited:
-            invited.append(owner)
-        for member in invited:
-            try:
-                await thread.add_user(member)
-            except discord.HTTPException:
-                log.warning("Không thêm được %s vào chat riêng", member.id)
 
-        await thread.send(embed=_thread_panel(data, phase), view=_submit_view())
-        await update_data(
-            lambda d: d["week"].setdefault("threads", {}).__setitem__(phase, thread.id)
-        )
-        return thread
+        for match in pending:
+            moment = time.monotonic()
+            if moment - _THREAD_RETRY.get(match["id"], 0.0) < 600:
+                continue
+            if len(_THREAD_RETRY) > 200:
+                _THREAD_RETRY.clear()
+            _THREAD_RETRY[match["id"]] = moment
+
+            members = []
+            for user_id in match["players"]:
+                member = guild.get_member(user_id)
+                if member is None:
+                    try:
+                        member = await guild.fetch_member(user_id)
+                    except discord.HTTPException:
+                        member = None
+                if member is not None:
+                    members.append(member)
+
+            best_of = "BO3" if match["best_of"] == 3 else "BO1"
+            names = " vs ".join(member.display_name[:14] for member in members) or "Trận đấu"
+            wl = data["tournament"].get("wl") or 0
+            try:
+                thread = await parent.create_thread(
+                    name=f"⚔️ WL{wl} · {best_of} · {names}"[:95],
+                    type=discord.ChannelType.private_thread,
+                    invitable=False,
+                    auto_archive_duration=1440,
+                )
+            except discord.HTTPException:
+                log.exception("Không tạo được chat riêng cho trận #%s", match["id"])
+                continue
+
+            invited = list(members)
+            if owner is not None and owner not in invited:
+                invited.append(owner)
+            for member in invited:
+                try:
+                    await thread.add_user(member)
+                except discord.HTTPException:
+                    log.warning("Không thêm được %s vào chat riêng", member.id)
+
+            await thread.send(embed=_thread_panel(data, match), view=_submit_view(match["id"]))
+            await update_data(
+                lambda d, mid=match["id"], tid=thread.id: ml.get_match(d, mid).__setitem__("thread_id", tid)
+            )
+            created[match["id"]] = thread
+        return created
 
     async def _delete_thread(self, thread_id):
         try:
@@ -686,8 +790,8 @@ class League(commands.Cog):
             return
         custom_id = (interaction.data or {}).get("custom_id") or ""
         try:
-            if custom_id == "league:submit":
-                return await self._on_submit(interaction)
+            if custom_id.startswith("league:submit:"):
+                return await self._on_submit(interaction, int(custom_id.split(":")[2]))
             if custom_id == "league:unregister":
                 return await self._on_unregister(interaction)
             if custom_id == "league:reset:1":
@@ -699,11 +803,11 @@ class League(commands.Cog):
                     content="Đã hủy. Không có dữ liệu nào bị xóa.", embed=None, view=None
                 )
             if custom_id.startswith("league:confirm:"):
-                _, _, phase, submitter = custom_id.split(":")
-                return await self._on_confirm(interaction, phase, int(submitter))
+                _, _, match_id, submitter = custom_id.split(":")
+                return await self._on_confirm(interaction, int(match_id), int(submitter))
             if custom_id.startswith("league:dispute:"):
-                _, _, phase, submitter = custom_id.split(":")
-                return await self._on_dispute(interaction, phase, int(submitter))
+                _, _, match_id, submitter = custom_id.split(":")
+                return await self._on_dispute(interaction, int(match_id), int(submitter))
         except Exception:
             log.exception("Lỗi khi xử lý nút %s", custom_id)
             text = "Có lỗi xảy ra, thử lại sau."
@@ -721,7 +825,7 @@ class League(commands.Cog):
             lambda d: ml.leave_registration(d, interaction.user.id, ml.now())
         )
         if status == "closed":
-            text = "Đăng ký tuần này đã đóng."
+            text = "Đăng ký tuần này đã chốt."
         elif status == "left":
             text = f"Đã hủy đăng ký. Còn {payload['count']} người."
         elif status == "absent":
@@ -740,8 +844,8 @@ class League(commands.Cog):
             return await interaction.response.edit_message(
                 content=(
                     "⚠️ **XÓA TOÀN BỘ DỮ LIỆU BOT**\n"
-                    "Sẽ xóa: Gym Leader, lịch sử trận, bảng xếp hạng, đăng ký tuần này, "
-                    "số WL, chat riêng của các trận.\n"
+                    "Sẽ xóa: Gym Leader, lịch sử trận, bảng xếp hạng, đăng ký, số WL, "
+                    "chat riêng của các trận.\n"
                     "**Không thể hoàn tác.** Bấm lần nữa để xác nhận."
                 ),
                 embed=None,
@@ -753,14 +857,14 @@ class League(commands.Cog):
         )
         await self._wipe_everything()
         await interaction.followup.send(
-            "✅ Đã reset toàn bộ dữ liệu. Tuần mới (WL1) sẽ tự mở trong ít phút.",
+            "✅ Đã reset toàn bộ dữ liệu. Panel **WL1** sẽ tự mở trong ít phút.",
             ephemeral=True,
         )
 
     async def _wipe_everything(self):
         data = await read_data(fresh=True)
-        thread_ids = [t for t in (data["week"].get("threads") or {}).values() if t]
-        message_id = data["week"].get("message_id")
+        thread_ids = ml.all_thread_ids(data)
+        message_id = data["signup"].get("message_id")
 
         def apply(d):
             d.clear()
@@ -775,36 +879,39 @@ class League(commands.Cog):
         if channel is not None:
             await self._retire_message(channel, message_id)
 
-    async def _on_submit(self, interaction):
+    async def _on_submit(self, interaction, match_id):
         if not isinstance(interaction.channel, discord.Thread):
             return await interaction.response.send_message(
                 "Nút này chỉ dùng trong chat riêng của trận.", ephemeral=True
             )
         data = await read_data(fresh=True)
-        if data["week"]["phase"] not in ("qualifier", "title"):
+        match = ml.get_match(data, match_id)
+        if not isinstance(match, dict) or match.get("status") != "open":
             return await interaction.response.send_message(
-                "Hiện không có trận nào đang diễn ra.", ephemeral=True
+                "Trận này đã kết thúc.", ephemeral=True
             )
-        if interaction.user.id not in ml.match_players(data):
+        if interaction.user.id not in match["players"]:
             return await interaction.response.send_message(
                 "Bạn không có trong trận này.", ephemeral=True
             )
-        await interaction.response.send_modal(ScoreModal(data["week"]["phase"]))
+        await interaction.response.send_modal(
+            ScoreModal(int(match.get("best_of") or 1), match_id)
+        )
 
-    async def _on_confirm(self, interaction, phase, submitter_id):
+    async def _on_confirm(self, interaction, match_id, submitter_id):
         await interaction.response.defer(thinking=True)
         data = await read_data(fresh=True)
-        if data["week"]["phase"] != phase:
+        match = ml.get_match(data, match_id)
+        if not isinstance(match, dict) or match.get("status") != "open":
             return await interaction.followup.send(
                 "Trận này đã kết thúc hoặc đổi trạng thái.", ephemeral=True
             )
-        submission = ml.get_submission(data, phase, submitter_id)
+        submission = ml.get_submission(data, match_id, submitter_id)
         if not isinstance(submission, dict):
             return await interaction.followup.send(
                 "Không tìm thấy biên bản này.", ephemeral=True
             )
-        players = ml.match_players(data)
-        opponent = next((uid for uid in players if uid != submitter_id), None)
+        opponent = next((uid for uid in match["players"] if uid != submitter_id), None)
         if interaction.user.id not in (opponent, OWNER_ID):
             return await interaction.followup.send(
                 "Chỉ đối thủ của người nộp (hoặc owner) mới xác nhận được.", ephemeral=True
@@ -815,7 +922,7 @@ class League(commands.Cog):
             )
 
         status, payload = await update_data(
-            lambda d: ml.confirm_result(d, submitter_id, ml.now())
+            lambda d: ml.confirm_result(d, match_id, submitter_id, ml.now())
         )
         if status == "already":
             return await interaction.followup.send(
@@ -823,7 +930,7 @@ class League(commands.Cog):
             )
         if status != "ok":
             return await interaction.followup.send(
-                "Không xác nhận được, trạng thái tuần đã thay đổi.", ephemeral=True
+                "Không xác nhận được, trạng thái giải đã thay đổi.", ephemeral=True
             )
 
         await self._announce_result(payload)
@@ -832,25 +939,24 @@ class League(commands.Cog):
         except discord.HTTPException:
             pass
 
-        if payload["phase"] == "qualifier" and not payload["result"].get("crowned"):
-            await self._ensure_thread("title")
         await self._delete_thread(interaction.channel.id)
+        await self._progress()
 
-    async def _on_dispute(self, interaction, phase, submitter_id):
+    async def _on_dispute(self, interaction, match_id, submitter_id):
         await interaction.response.defer(thinking=True)
         data = await read_data(fresh=True)
-        if data["week"]["phase"] != phase:
+        match = ml.get_match(data, match_id)
+        if not isinstance(match, dict) or match.get("status") != "open":
             return await interaction.followup.send(
                 "Trận này đã kết thúc hoặc đổi trạng thái.", ephemeral=True
             )
-        players = ml.match_players(data)
-        opponent = next((uid for uid in players if uid != submitter_id), None)
+        opponent = next((uid for uid in match["players"] if uid != submitter_id), None)
         if interaction.user.id not in (opponent, OWNER_ID):
             return await interaction.followup.send(
                 "Chỉ đối thủ của người nộp (hoặc owner) mới báo sai được.", ephemeral=True
             )
         status, payload = await update_data(
-            lambda d: ml.dispute_result(d, submitter_id, interaction.user.id, ml.now())
+            lambda d: ml.dispute_result(d, match_id, submitter_id, interaction.user.id, ml.now())
         )
         if status != "ok":
             return await interaction.followup.send(
@@ -862,43 +968,36 @@ class League(commands.Cog):
             "Owner dùng `/ket_qua` để chốt, hoặc bấm ✅ trên biên bản để chấp nhận."
         )
 
+    async def _progress(self):
+        """Chạy tiếp vòng đấu sau khi có kết quả (ghép vòng mới, chốt danh sách...)."""
+        actions = await update_data(lambda d: ml.ensure_week(d, ml.now()))
+        if actions:
+            await self._handle_actions(actions)
+
     async def _announce_result(self, payload):
         channel = await get_channel(self.bot, GYM_CHANNEL_ID)
         if channel is None:
             return
-        result = payload["result"]
+        phase = payload["phase"]
         winner = payload["winner_id"]
-        if payload["phase"] == "qualifier":
-            title = "🏆 KẾT QUẢ BO1 — VÒNG BỐC THĂM"
-            if result.get("crowned"):
-                text = (
-                    f"👑 <@{winner}> sẽ nhậm chức Gym Leader vào **00:00 thứ 2** tuần sau."
-                )
-            else:
-                text = (
-                    f"<@{winner}> thắng BO1.\n"
-                    f"Tiếp theo: thách đấu <@{result['leader_id']}> — **BO3**."
-                )
+        if phase == "qualifier":
+            title = "🏆 KẾT QUẢ VÒNG LOẠI BO1"
+            text = f"<@{winner}> thắng và đi tiếp."
+        elif phase == "second":
+            title = "🏆 KẾT QUẢ GHÉP CẶP LẦN 2"
+            text = f"<@{winner}> thắng. Danh sách random sẽ chốt khi hết vòng."
         else:
-            title = "👑 KẾT QUẢ BO3 — TRANH CHỨC GYM LEADER"
-            if result.get("leader_changed"):
-                text = (
-                    f"👑 <@{winner}> thắng BO3 và sẽ nhậm chức Gym Leader "
-                    f"vào **00:00 thứ 2** tuần sau."
-                )
-            else:
-                text = (
-                    f"🛡️ <@{winner}> bảo vệ chức thành công, giữ ghế thêm 1 tuần "
-                    f"(từ **00:00 thứ 2**)."
-                )
+            title = "👑 KẾT QUẢ CHUNG KẾT BO3"
+            text = (
+                f"<@{winner}> thắng chung kết và sẽ nhậm chức **Gym Leader** "
+                "vào **00:00 Thứ 2**."
+            )
         embed = discord.Embed(
             title=title,
             color=0x2ECC71,
             description=f"{text}\n📊 Tỷ số: `{payload.get('score')}`",
         )
-        embed.set_footer(
-            text=f"Biên bản do người chơi nộp, đã được đối thủ xác nhận."
-        )
+        embed.set_footer(text="Biên bản do người chơi nộp, đã được đối thủ xác nhận.")
         file = await self._proof_file(payload.get("submission") or {})
         try:
             await channel.send(embed=embed, file=file)
@@ -928,14 +1027,19 @@ class League(commands.Cog):
     # Lệnh người chơi
     # ------------------------------------------------------------------ #
 
-    @app_commands.command(name="gym", description="Xem Gym Leader và tình trạng tuần này.")
+    @app_commands.command(name="luat", description="Xem luật thi đấu của Gym Dark.")
+    @is_gym_channel()
+    async def luat(self, interaction: discord.Interaction):
+        await interaction.response.send_message(embeds=rules_embeds())
+
+    @app_commands.command(name="gym", description="Xem Gym Leader và tình trạng giải hiện tại.")
     @is_gym_channel()
     async def gym(self, interaction: discord.Interaction):
         await interaction.response.defer()
         data = await read_data()
-        embed = discord.Embed(title="🏟️ GYM LEADER", color=0x2ECC71)
+        embed = discord.Embed(title="🏟️ GYM DARK TGA", color=0x2ECC71)
         embed.add_field(name="👑 Leader hiện tại", value=ml.leader_term_text(data), inline=False)
-        embed.add_field(name="📅 Tuần này", value=ml.week_summary(data, ml.now()), inline=False)
+        embed.add_field(name="📅 Giải hiện tại", value=ml.week_summary(data, ml.now()), inline=False)
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="dang_ky", description="Đăng ký hoặc hủy đăng ký tranh chức Gym Leader.")
@@ -950,9 +1054,7 @@ class League(commands.Cog):
             lambda d: ml.toggle_registration(d, interaction.user.id, ml.now())
         )
         if status == "closed":
-            text = "Đăng ký tuần này đã đóng."
-        elif status == "leader":
-            text = "Gym Leader không đăng ký tranh chức của chính mình."
+            text = "Đăng ký tuần này đã chốt."
         elif status == "left":
             text = f"Đã hủy đăng ký. Còn {payload['count']} người."
         else:
@@ -980,18 +1082,28 @@ class League(commands.Cog):
         embed = discord.Embed(title="📜 LỊCH SỬ TRẬN", color=0xE74C3C)
         if not history:
             embed.description = "*Chưa có trận nào.*"
+        labels = {
+            "qualifier": "BO1 vòng loại",
+            "second": "BO1 ghép cặp lần 2",
+            "final": "BO3 chung kết",
+            "qualifier_void": "Vòng loại — bỏ (không báo kết quả)",
+            "second_void": "Ghép cặp lần 2 — bỏ (không báo kết quả)",
+            "final_void": "Chung kết — bỏ (không báo kết quả)",
+            "legacy": "Hệ thống cũ",
+        }
         for item in history:
-            label = {
-                "qualifier": "BO1 vòng bốc thăm",
-                "title": "BO3 tranh chức",
-                "legacy": "Hệ thống cũ",
-            }.get(item.get("type"), "Trận")
-            embed.add_field(
-                name=f"#{item.get('match_id')} — {label}",
-                value=(
+            label = labels.get(item.get("type"), "Trận")
+            if item.get("winner_id"):
+                value = (
                     f"🏆 <@{item.get('winner_id')}> thắng <@{item.get('loser_id')}>\n"
                     f"📅 `{item.get('at', '—')}`"
-                ),
+                )
+            else:
+                players = ", ".join(f"<@{uid}>" for uid in item.get("players") or [])
+                value = f"⛔ Không báo kết quả: {players}\n📅 `{item.get('at', '—')}`"
+            embed.add_field(
+                name=f"#{item.get('match_id')} — {label}",
+                value=value,
                 inline=False,
             )
         await interaction.followup.send(embed=embed)
@@ -1023,7 +1135,7 @@ class League(commands.Cog):
     # Lệnh quản lý
     # ------------------------------------------------------------------ #
 
-    @app_commands.command(name="ket_qua", description="[OWNER] Chốt người thắng của trận đang diễn ra.")
+    @app_commands.command(name="ket_qua", description="[OWNER] Chốt người thắng của trận đang mở.")
     @is_gym_channel()
     async def ket_qua(self, interaction: discord.Interaction, nguoi_thang: discord.Member):
         if not is_owner(interaction.user.id):
@@ -1031,60 +1143,33 @@ class League(commands.Cog):
                 "Chỉ người quản lý Gym mới dùng được lệnh này.", ephemeral=True
             )
         await interaction.response.defer()
-        data = await read_data()
-        phase = data["week"]["phase"]
         current = ml.now()
-
-        if phase == "qualifier":
-            status, payload = await update_data(
-                lambda d: ml.record_qualifier(d, nguoi_thang.id, current)
-            )
-        elif phase == "title":
-            status, payload = await update_data(
-                lambda d: ml.record_title(d, nguoi_thang.id, current)
-            )
-        else:
+        data = await read_data(fresh=True)
+        match = ml.match_for_user(data, nguoi_thang.id)
+        if match is None:
             return await fail_deferred(
-                interaction, "Hiện không có trận nào đang chờ chốt kết quả."
+                interaction, f"{nguoi_thang.mention} không có trận nào đang mở."
             )
+        thread_id = match.get("thread_id")
 
-        if status == "not_in_match":
-            return await fail_deferred(
-                interaction, f"{nguoi_thang.mention} không có trong trận đang diễn ra."
-            )
-        if status == "phase":
-            return await fail_deferred(interaction, "Trạng thái tuần đã thay đổi, thử lại sau.")
+        status, payload = await update_data(
+            lambda d: ml.force_result(d, nguoi_thang.id, current, match["id"])
+        )
+        if status != "ok":
+            return await fail_deferred(interaction, "Không chốt được trận này, thử lại sau.")
 
-        embed = discord.Embed(title=f"✅ ĐÃ CHỐT — MATCH #{payload['match_id']}", color=0x2ECC71)
-        if phase == "qualifier":
-            if payload.get("crowned"):
-                embed.description = (
-                    f"👑 <@{payload['crowned']}> sẽ nhậm chức Gym Leader vào **00:00 thứ 2**."
-                )
-            else:
-                embed.description = (
-                    f"🏆 <@{payload['challenger_id']}> thắng BO1.\n"
-                    f"Tiếp theo: thách đấu Gym Leader <@{payload['leader_id']}> — **BO3**."
-                )
-        else:
-            if payload["leader_changed"]:
-                embed.description = (
-                    f"👑 <@{payload['winner_id']}> thắng BO3 và sẽ nhậm chức Gym Leader "
-                    f"vào **00:00 thứ 2**."
-                )
-            else:
-                embed.description = (
-                    f"🛡️ <@{payload['winner_id']}> bảo vệ chức thành công, giữ ghế thêm 1 tuần."
-                )
+        embed = discord.Embed(
+            title=f"✅ ĐÃ CHỐT — MATCH #{payload['match_id']}",
+            color=0x2ECC71,
+            description=(
+                f"🏆 <@{payload['winner_id']}> thắng <@{payload['loser_id']}> "
+                f"({ml.phase_label(payload['phase'])})."
+            ),
+        )
         await interaction.followup.send(embed=embed)
-
-        thread_id = (data["week"].get("threads") or {}).get(phase)
         if thread_id:
             await self._delete_thread(thread_id)
-        if phase == "qualifier" and not payload.get("crowned"):
-            thread = await self._ensure_thread("title")
-            if thread is not None:
-                await interaction.followup.send(f"💬 Chat riêng của trận BO3: {thread.mention}")
+        await self._progress()
 
     @app_commands.command(name="gan_leader", description="[OWNER] Gán Gym Leader thủ công.")
     @is_gym_channel()
@@ -1112,9 +1197,9 @@ class League(commands.Cog):
             f"👑 Đã gán {member.mention} làm Gym Leader cho tuần sau."
         )
 
-    @app_commands.command(name="huy_tuan", description="[OWNER] Hủy tuần hiện tại và gia hạn Leader.")
+    @app_commands.command(name="huy_giai", description="[OWNER] Hủy giải đang chạy và gia hạn Leader.")
     @is_gym_channel()
-    async def huy_tuan(self, interaction: discord.Interaction):
+    async def huy_giai(self, interaction: discord.Interaction):
         if not is_owner(interaction.user.id):
             return await interaction.response.send_message(
                 "Chỉ người quản lý Gym mới dùng được lệnh này.", ephemeral=True
@@ -1122,19 +1207,23 @@ class League(commands.Cog):
         await interaction.response.defer()
         current = ml.now()
         data = await read_data(fresh=True)
-        thread_ids = [t for t in (data["week"].get("threads") or {}).values() if t]
+        thread_ids = ml.all_thread_ids(data)
 
-        def apply(data):
-            ml.extend_term(data, current)
-            data["leader_elect"] = None
-            data["week"]["phase"] = "done"
-            data["week"]["picked"] = []
+        def apply(d):
+            ml.extend_term(d, current)
+            d["leader_elect"] = None
+            for match in (d["tournament"].get("matches") or {}).values():
+                if match.get("status") == "open":
+                    match["status"] = "void"
+                    match["ended_at"] = current.isoformat()
+            d["tournament"]["phase"] = "done"
+            d["tournament"]["flags"]["cancelled"] = True
             return True
 
         await update_data(apply)
         for thread_id in thread_ids:
             await self._delete_thread(thread_id)
-        await interaction.followup.send("Đã hủy tuần này. Leader được gia hạn 1 tuần.")
+        await interaction.followup.send("Đã hủy giải. Leader được gia hạn 1 tuần.")
 
     @app_commands.command(
         name="tao_dang_ky", description="[OWNER] Đăng lại tin đăng ký thách đấu ngay bây giờ."
@@ -1147,23 +1236,47 @@ class League(commands.Cog):
             )
         await interaction.response.defer(ephemeral=True)
         data = await read_data(fresh=True)
-        week = data["week"]
-        if week["phase"] != "open":
+        signup = data["signup"]
+        if not signup.get("open"):
             return await interaction.followup.send(
-                f"Chỉ đăng được khi đang mở đăng ký (hiện tại: {ml.phase_label(week['phase'])}).",
-                ephemeral=True,
+                "Đăng ký đang đóng, thử lại sau ít phút.", ephemeral=True
             )
         channel = await get_channel(self.bot, GYM_CHANNEL_ID)
         if channel is None:
             return await interaction.followup.send("Không tìm thấy kênh Gym.", ephemeral=True)
-        await self._retire_message(channel, week.get("message_id"))
+        await self._retire_message(channel, signup.get("message_id"))
         message = await channel.send(
             embed=_registration_embed(data, ml.now()), view=RegisterView(), silent=True
         )
-        await update_data(lambda d: d["week"].__setitem__("message_id", message.id))
+        await update_data(lambda d: d["signup"].__setitem__("message_id", message.id))
         await interaction.followup.send(
-            f"Đã đăng tin đăng ký **WL{week.get('wl') or 1}**.", ephemeral=True
+            f"Đã đăng tin đăng ký **WL{signup.get('wl') or 1}**.", ephemeral=True
         )
+
+    @app_commands.command(
+        name="bat_dau", description="[OWNER] Chốt đăng ký và mở giải ngay (để test)."
+    )
+    @is_gym_channel()
+    async def bat_dau(self, interaction: discord.Interaction):
+        if not is_owner(interaction.user.id):
+            return await interaction.response.send_message(
+                "Chỉ người quản lý Gym mới dùng được lệnh này.", ephemeral=True
+            )
+        await interaction.response.defer(ephemeral=True)
+        status, actions = await update_data(
+            lambda d: ml.start_tournament_now(d, ml.now())
+        )
+        if status == "busy":
+            return await interaction.followup.send(
+                "Đang có giải chạy rồi.", ephemeral=True
+            )
+        if status == "few":
+            return await interaction.followup.send(
+                "Cần ít nhất 2 người đăng ký mới mở giải.", ephemeral=True
+            )
+        await self._handle_actions(actions)
+        await self._ensure_match_threads()
+        await interaction.followup.send("Đã chốt đăng ký và mở giải.", ephemeral=True)
 
     @app_commands.command(
         name="reset", description="[OWNER] Xóa toàn bộ dữ liệu bot (xác nhận 2 lần)."
@@ -1178,7 +1291,7 @@ class League(commands.Cog):
             title="⚠️ RESET TOÀN BỘ DỮ LIỆU",
             description=(
                 "Lệnh này xóa **tất cả**: Gym Leader, lịch sử trận, bảng xếp hạng, "
-                "đăng ký tuần này, số WL và chat riêng của các trận.\n\n"
+                "đăng ký, số WL và chat riêng của các trận.\n\n"
                 "**Không thể hoàn tác.** Bấm nút bên dưới để bắt đầu xác nhận."
             ),
             color=0xE74C3C,
