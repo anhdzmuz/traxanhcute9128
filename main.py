@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import time
@@ -16,11 +17,23 @@ log = logging.getLogger(__name__)
 # Web endpoint used by Render health checks.
 app = Flask(__name__)
 
+# Trạng thái thử đăng nhập lại, hiển thị ở `/` để biết bot đang kẹt vì lý do gì.
+LOGIN_STATE = {"attempt": 0, "delay": 0}
+
 
 @app.route("/")
 def home():
     if not bot.is_ready():
-        return f"Working.. | Bot chưa kết nối Discord | kênh Gym: {GYM_CHANNEL_ID}"
+        waiting = ""
+        if LOGIN_STATE["attempt"]:
+            waiting = (
+                f" | đang thử đăng nhập lại (lần {LOGIN_STATE['attempt']},"
+                f" chờ {LOGIN_STATE['delay']}s)"
+            )
+        return (
+            f"Working.. | Bot chưa kết nối Discord{waiting}"
+            f" | kênh Gym: {GYM_CHANNEL_ID}"
+        )
     user = bot.user
     name = f"{user} ({user.id})" if user else "?"
     return (
@@ -137,6 +150,43 @@ async def on_ready():
         log.exception("Lỗi đồng bộ slash commands")
 
 
+async def start_bot(token: str) -> None:
+    """Đăng nhập Discord, tự thử lại khi bị chặn tạm thời.
+
+    Render free dùng IP dùng chung nên hay bị Cloudflare trả 429/1015
+    ("You are being rate limited") ngay ở bước ``GET /users/@me``. Trước đây
+    lỗi này làm cả process thoát, Render restart liên tục và càng bị chặn.
+    Giữ Flask sống và thử lại với backoff 30s → 300s.
+    """
+    delay = 30
+    while True:
+        try:
+            await bot.start(token)
+            return
+        except discord.LoginFailure:
+            # Token sai thì thử lại cũng vô ích, phải báo ngay.
+            raise
+        except Exception as exc:  # noqa: BLE001 - mọi lỗi mạng/HTTP đều đáng thử lại
+            LOGIN_STATE["attempt"] += 1
+            LOGIN_STATE["delay"] = delay
+            status = getattr(exc, "status", None)
+            hint = ""
+            if status == 429:
+                hint = (
+                    " (429 — IP của Render đang bị Cloudflare tạm chặn,"
+                    " không phải lỗi code)"
+                )
+            log.warning(
+                "Không đăng nhập được Discord: %s: %s%s. Thử lại sau %ss.",
+                type(exc).__name__,
+                str(exc).splitlines()[0][:200],
+                hint,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 300)
+
+
 async def main():
     discord.utils.setup_logging()
     keep_alive()
@@ -147,9 +197,8 @@ async def main():
         token = os.environ.get("DISCORD_TOKEN")
         if not token:
             raise RuntimeError("Thiếu DISCORD_TOKEN trong Environment Variables.")
-        await bot.start(token)
+        await start_bot(token)
 
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
