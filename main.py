@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Trạng thái thử đăng nhập lại, hiển thị ở `/` để biết bot đang kẹt vì lý do gì.
-LOGIN_STATE = {"attempt": 0, "delay": 0}
+LOGIN_STATE = {"attempt": 0, "delay": 0, "error": "", "ip": ""}
 
 
 @app.route("/")
@@ -30,15 +30,19 @@ def home():
                 f" | đang thử đăng nhập lại (lần {LOGIN_STATE['attempt']},"
                 f" chờ {LOGIN_STATE['delay']}s)"
             )
+        if LOGIN_STATE["error"]:
+            waiting += f" | lỗi cuối: {LOGIN_STATE['error']}"
+        ip = f" | IP ra: {LOGIN_STATE['ip']}" if LOGIN_STATE["ip"] else ""
         return (
-            f"Working.. | Bot chưa kết nối Discord{waiting}"
+            f"Working.. | Bot chưa kết nối Discord{waiting}{ip}"
             f" | kênh Gym: {GYM_CHANNEL_ID}"
         )
     user = bot.user
     name = f"{user} ({user.id})" if user else "?"
+    ip = f" | IP ra: {LOGIN_STATE['ip']}" if LOGIN_STATE["ip"] else ""
     return (
         f"Working.. | Bot online: {name} | {len(bot.guilds)} server "
-        f"| ping {round(bot.latency * 1000)}ms | kênh Gym: {GYM_CHANNEL_ID}"
+        f"| ping {round(bot.latency * 1000)}ms{ip} | kênh Gym: {GYM_CHANNEL_ID}"
     )
 
 
@@ -73,9 +77,19 @@ def _self_ping():
             log.warning("Self-ping %s lỗi: %s", KEEP_ALIVE_URL, exc)
 
 
+def _detect_egress_ip():
+    """Lấy IP công khai của service, để biết đã đổi được IP chưa."""
+    try:
+        with urllib.request.urlopen("https://api.ipify.org", timeout=15) as resp:
+            LOGIN_STATE["ip"] = resp.read(64).decode().strip()
+    except Exception as exc:  # noqa: BLE001 - chỉ để hiển thị, không quan trọng
+        log.warning("Không lấy được IP ra: %s", exc)
+
+
 def keep_alive():
     Thread(target=run_web, daemon=True).start()
     Thread(target=_self_ping, daemon=True, name="self-ping").start()
+    Thread(target=_detect_egress_ip, daemon=True, name="egress-ip").start()
 
 
 # Bot chỉ dùng slash command nên không cần Message Content intent (đặc quyền).
@@ -172,16 +186,20 @@ async def start_bot(token: str) -> None:
             LOGIN_STATE["attempt"] += 1
             LOGIN_STATE["delay"] = delay
             status = getattr(exc, "status", None)
+            first_line = str(exc).splitlines()[0][:160]
+            LOGIN_STATE["error"] = (
+                f"{type(exc).__name__} {status}: {first_line}" if status else f"{type(exc).__name__}: {first_line}"
+            )
             hint = ""
             if status == 429:
                 hint = (
-                    " (429 — IP của Render đang bị Cloudflare tạm chặn,"
+                    " (429 — IP đang bị Cloudflare tạm chặn,"
                     " không phải lỗi code)"
                 )
             log.warning(
                 "Không đăng nhập được Discord: %s: %s%s. Thử lại sau %ss.",
                 type(exc).__name__,
-                str(exc).splitlines()[0][:200],
+                first_line,
                 hint,
                 delay,
             )
