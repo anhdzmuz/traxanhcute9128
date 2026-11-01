@@ -14,6 +14,7 @@ Luồng hoạt động:
 
 import asyncio
 import logging
+import time
 
 import discord
 from discord import app_commands
@@ -39,7 +40,13 @@ JOIN_CUSTOM_ID = "badge:join"
 # Lưu trữ
 # --------------------------------------------------------------------------- #
 
+_tables_ready = False
+
+
 def _init_tables():
+    global _tables_ready
+    if _tables_ready:
+        return
     with get_pool().connection() as conn:
         conn.execute(
             """
@@ -92,6 +99,28 @@ def _init_tables():
             "CREATE INDEX IF NOT EXISTS badge_rooms_open "
             "ON badge_rooms (guild_id, status)"
         )
+    _tables_ready = True
+
+
+def _ensure_tables(attempts=5, delay=3.0):
+    """Tạo bảng có thử lại. Lỗi mạng tạm thời không được làm bot chết."""
+    global _tables_ready
+    for attempt in range(1, attempts + 1):
+        try:
+            _init_tables()
+            return True
+        except Exception:  # noqa: BLE001 - lỗi DB tạm thời
+            if attempt == attempts:
+                log.exception("Không tạo được bảng huy hiệu sau %s lần thử", attempts)
+                return False
+            log.warning(
+                "Tạo bảng huy hiệu thất bại (lần %s/%s), thử lại sau %.0fs",
+                attempt,
+                attempts,
+                delay,
+            )
+            time.sleep(delay)
+    return _tables_ready
 
 
 def _get_holders_sync(guild_id):
@@ -284,9 +313,13 @@ def _set_thread_sync(room_id, thread_id):
 def _open_rooms_sync(guild_id):
     with get_pool().connection() as conn:
         return [
-            (int(r[0]), int(r[1]), r[2])
+            (
+                int(r[0]),
+                int(r[1]) if r[1] else None,
+                int(r[2].timestamp()) if r[2] else 0,
+            )
             for r in conn.execute(
-                "SELECT id, thread_id, status FROM badge_rooms "
+                "SELECT id, thread_id, created_at FROM badge_rooms "
                 "WHERE guild_id = %s AND status = 'open'",
                 (guild_id,),
             ).fetchall()
@@ -443,6 +476,11 @@ async def handle_join(interaction: discord.Interaction):
         )
 
     await interaction.response.defer(ephemeral=True)
+    if not await asyncio.to_thread(_ensure_tables):
+        return await interaction.followup.send(
+            "Hệ thống huy hiệu đang kết nối lại database, thử lại sau ít phút.",
+            ephemeral=True,
+        )
     try:
         status, payload = await asyncio.to_thread(_join_sync, guild.id, interaction.user.id)
     except Exception as exc:  # noqa: BLE001 - người chơi cần thông báo gọn
@@ -540,7 +578,9 @@ class Badge(commands.Cog):
         self.bot = bot
 
     async def cog_load(self):
-        await asyncio.to_thread(_init_tables)
+        # Không để lỗi DB tạm thời làm bot không khởi động được.
+        if not await asyncio.to_thread(_ensure_tables):
+            log.error("Tính năng huy hiệu chưa sẵn sàng, sẽ thử lại trong vòng lặp dọn phòng.")
         self.bot.add_view(BadgeJoinView())
         self.reconcile_loop.start()
 
@@ -581,11 +621,31 @@ class Badge(commands.Cog):
             )
 
         await interaction.response.defer(ephemeral=True)
+        if not await asyncio.to_thread(_ensure_tables):
+            return await interaction.followup.send(
+                "Hệ thống huy hiệu đang kết nối lại database, thử lại sau ít phút.",
+                ephemeral=True,
+            )
         status, payload = await asyncio.to_thread(_close_room_sync, room_id, won)
         if status != "ok":
             return await interaction.followup.send(
                 "Phòng này đã được xử lý rồi.", ephemeral=True
             )
+
+        # Đóng phòng: khoá + lưu trữ thread để owner xoá khi rảnh, slot đã được
+        # giải phóng ngay trong database nên người kế tiếp không phải chờ.
+        thread = await get_channel(self.bot, payload["thread_id"]) if payload.get("thread_id") else None
+        if isinstance(thread, discord.Thread):
+            try:
+                await thread.send(
+                    "🔒 Phòng đã có kết quả. Cảm ơn mọi người — phòng sẽ được đóng lại."
+                )
+            except discord.HTTPException:
+                pass
+            try:
+                await thread.edit(locked=True, archived=True)
+            except discord.HTTPException:
+                log.warning("Không khoá được phòng huy hiệu %s", payload.get("thread_id"))
 
         # Thông báo trong kênh Gym + tag owner để đóng phòng, nhường slot.
         channel = await get_channel(self.bot, GYM_CHANNEL_ID)
@@ -604,13 +664,6 @@ class Badge(commands.Cog):
                 await channel.send(text, allowed_mentions=discord.AllowedMentions(users=True))
             except discord.HTTPException:
                 log.warning("Không gửi được thông báo kết quả huy hiệu")
-
-        thread = await get_channel(self.bot, payload["thread_id"]) if payload.get("thread_id") else None
-        if isinstance(thread, discord.Thread):
-            try:
-                await thread.delete()
-            except discord.HTTPException:
-                log.warning("Không xoá được phòng huy hiệu %s", payload.get("thread_id"))
 
         next_thread = await _promote_next(self.bot, guild, payload)
         if next_thread is not None and channel is not None:
@@ -631,10 +684,22 @@ class Badge(commands.Cog):
     @tasks.loop(minutes=15)
     async def reconcile_loop(self):
         try:
+            if not await asyncio.to_thread(_ensure_tables):
+                return
             for guild in self.bot.guilds:
                 rooms = await asyncio.to_thread(_open_rooms_sync, guild.id)
-                for room_id, thread_id, _status in rooms:
+                for room_id, thread_id, created_at in rooms:
                     if not thread_id:
+                        # Phòng tạo dở (bot tắt giữa chừng) không có thread:
+                        # chỉ đóng khi đã quá 5 phút để không tranh slot.
+                        if time.time() - created_at < 300:
+                            continue
+                        log.warning(
+                            "Phòng huy hiệu %s thiếu thread, đóng để nhường slot", room_id
+                        )
+                        result = await asyncio.to_thread(_close_room_sync, room_id, False)
+                        if result[0] == "ok":
+                            await _promote_next(self.bot, guild, result[1])
                         continue
                     thread = await get_channel(self.bot, thread_id)
                     if isinstance(thread, discord.Thread):
@@ -684,6 +749,11 @@ class Badge(commands.Cog):
                 "5 người phải khác nhau.", ephemeral=True
             )
         await interaction.response.defer(ephemeral=True)
+        if not await asyncio.to_thread(_ensure_tables):
+            return await interaction.followup.send(
+                "Hệ thống huy hiệu đang kết nối lại database, thử lại sau ít phút.",
+                ephemeral=True,
+            )
         await asyncio.to_thread(
             _set_holders_sync, interaction.guild_id, [m.id for m in members]
         )
@@ -705,6 +775,11 @@ class Badge(commands.Cog):
                 "Chỉ người quản lý Gym mới dùng được lệnh này.", ephemeral=True
             )
         await interaction.response.defer(ephemeral=True)
+        if not await asyncio.to_thread(_ensure_tables):
+            return await interaction.followup.send(
+                "Hệ thống huy hiệu đang kết nối lại database, thử lại sau ít phút.",
+                ephemeral=True,
+            )
         holders = await asyncio.to_thread(_get_holders_sync, interaction.guild_id)
         if not holders:
             return await interaction.followup.send(
@@ -771,6 +846,11 @@ class Badge(commands.Cog):
         target = member or interaction.user
         await interaction.response.defer(ephemeral=True)
 
+        if not await asyncio.to_thread(_ensure_tables):
+            return await interaction.followup.send(
+                "Hệ thống huy hiệu đang kết nối lại database, thử lại sau ít phút.",
+                ephemeral=True,
+            )
         rows = await asyncio.to_thread(_history_sync, interaction.guild_id, target.id)
         holders = await asyncio.to_thread(_get_holders_sync, interaction.guild_id)
         total = len(holders) or 5

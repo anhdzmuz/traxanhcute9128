@@ -1,0 +1,114 @@
+"""Test các thành phần UI/logic của cog Badge (không cần Discord hay DB)."""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import discord  # noqa: E402
+
+import cogs.Badge as badge  # noqa: E402
+
+
+class FakePermissions:
+    def __init__(self, administrator=False):
+        self.administrator = administrator
+
+
+class FakeUser:
+    def __init__(self, user_id, administrator=False):
+        self.id = user_id
+        self.guild_permissions = FakePermissions(administrator)
+
+
+class FakeMember(FakeUser):
+    def __init__(self, user_id, name, administrator=False):
+        super().__init__(user_id, administrator)
+        self.display_name = name
+        self._mention = f"<@{user_id}>"
+
+    @property
+    def mention(self):
+        return self._mention
+
+
+HOLDERS = [101, 102, 103, 104, 105]
+
+
+def test_room_view_custom_ids_and_callbacks():
+    view = badge._room_view(42)
+    ids = [child.custom_id for child in view.children]
+    assert ids == ["badge:win:42", "badge:lose:42"]
+    # Callback rỗng để view trong bộ nhớ không báo "unknown callback";
+    # xử lý thật nằm ở on_interaction.
+    assert all(child.callback is not None for child in view.children)
+
+
+def test_join_view_is_persistent():
+    view = badge.BadgeJoinView()
+    assert [child.custom_id for child in view.children] == [badge.JOIN_CUSTOM_ID]
+    assert view.timeout is None
+
+
+def test_room_embed_shows_badge_position():
+    challenger = FakeMember(2001, "ThachDau")
+    holder = FakeMember(101, "Shady")
+    embed = badge._room_embed(3, 5, challenger, holder)
+    assert "TRẬN HUY HIỆU 3" in embed.title
+    assert challenger.mention in embed.description
+    assert holder.mention in embed.description
+    assert "3/5" in embed.description
+    assert "3/5" in embed.footer.text
+
+
+def test_can_judge_allows_council_owner_and_admin():
+    owner = FakeUser(badge.OWNER_ID)
+    council = FakeUser(102)
+    admin = FakeUser(999, administrator=True)
+    member = FakeUser(2001)
+
+    assert badge.can_judge(owner, HOLDERS) is True
+    assert badge.can_judge(council, HOLDERS) is True
+    assert badge.can_judge(admin, HOLDERS) is True
+    assert badge.can_judge(member, HOLDERS) is False
+
+
+def test_can_judge_handles_missing_permissions():
+    class DMUser:
+        id = 2001
+
+    assert badge.can_judge(DMUser(), []) is False
+
+
+def test_commands_are_registered_with_expected_names():
+    names = sorted(cmd.name for cmd in badge.Badge.__cog_app_commands__)
+    assert names == [
+        "battle_bage",
+        "check_history_bage",
+        "dat_council",
+        "panel_huy_hieu",
+    ]
+
+
+def test_dat_council_takes_five_members():
+    command = next(
+        cmd for cmd in badge.Badge.__cog_app_commands__ if cmd.name == "dat_council"
+    )
+    params = [p.name for p in command.parameters]
+    assert params == ["nguoi_1", "nguoi_2", "nguoi_3", "nguoi_4", "nguoi_5"]
+    for param in command.parameters:
+        assert param.type is discord.AppCommandOptionType.user
+
+
+def test_table_init_short_circuits_when_ready():
+    """Sau lần đầu thành công, không được mở kết nối DB nữa."""
+    original = badge._tables_ready
+    badge._tables_ready = True
+    try:
+        badge._init_tables()  # không được ném lỗi vì không chạm DB
+    finally:
+        badge._tables_ready = original
+
+
+def test_queue_limit_is_two():
+    assert badge.MAX_QUEUE == 2
