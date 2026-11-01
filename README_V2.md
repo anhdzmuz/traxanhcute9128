@@ -60,6 +60,22 @@ hoặc bấm ✅ để chấp nhận biên bản.
 
 Tỷ số hợp lệ: BO1 `1-0 / 0-1`, BO3 `2-0 / 2-1 / 0-2 / 1-2`.
 
+## Huy hiệu (badge)
+
+Thứ tự từ thấp đến cao: **Huy hiệu 1 → 5** (5 người giữ, người cuối là Gym Leader).
+Owner đặt danh sách bằng `/dat_council @1 @2 @3 @4 @5` (một lần, đổi người thì chạy lại).
+
+1. Member bấm nút trên panel (`/panel_huy_hieu`) hoặc dùng `/battle_bage`.
+2. Bot mở **1 private thread** gồm người thách đấu + 5 người giữ huy hiệu + owner.
+3. Tối đa **2 người xếp hàng chờ**; phòng trước đóng thì người đầu hàng được mở phòng.
+4. **Shadow Council / Admin** bấm **✅ Thắng** (trao huy hiệu + ghi log) hoặc
+   **❌ Thua** (đóng phòng, không trao).
+5. Bot khoá thread, tag owner trong kênh Gym để đóng phòng và nhường slot.
+6. `/check_history_bage [member]` xem đã nhận huy hiệu nào, **ngày giờ** cụ thể.
+
+Log lưu ở PostgreSQL (`badge_config`, `badge_rooms`, `badge_queue`, `badge_history`),
+không mất khi restart.
+
 ## Ưu tiên
 
 Ai vào được vòng **Thứ 5 – Thứ 7** mà không được random chọn vào chung kết sẽ được
@@ -74,6 +90,8 @@ Người được chọn thì ưu tiên về 0.
 - `/dang_ky` — đăng ký / hủy đăng ký (dùng thay cho nút).
 - `/lich_su [member]` — 10 trận gần nhất.
 - `/bang_xep_hang` — top thắng nhiều và top số lần làm Leader.
+- `/battle_bage` — đăng ký thách đấu lấy huy hiệu (như bấm nút trên panel).
+- `/check_history_bage [member]` — huy hiệu đã nhận + ngày giờ.
 
 ### Owner (ID trong `cogs/core.py`)
 - `/bat_dau` — chốt đăng ký và mở giải **ngay** (dùng để test, không cần chờ Thứ 2).
@@ -83,6 +101,8 @@ Người được chọn thì ưu tiên về 0.
 - `/tao_dang_ky` — đăng lại tin đăng ký ngay (tự mở lại đăng ký nếu đang đóng).
 - `/kiem_tra_quyen` — xem quyền **thực tế** bot đang có trong kênh Gym và kênh trận, kèm các channel override đang chặn.
 - `/reset` — **xóa toàn bộ dữ liệu bot**, xác nhận 2 lần. Sau khi reset, panel **WL1** tự mở trong ~2 phút.
+- `/dat_council @1 @2 @3 @4 @5` — đặt 5 người giữ huy hiệu theo thứ tự thấp → cao.
+- `/panel_huy_hieu` — đăng panel đăng ký đánh lấy huy hiệu.
 
 ## Cấu hình
 
@@ -115,6 +135,7 @@ Panel được gửi ở chế độ im lặng (`silent`). Nếu Discord từ ch
 - `match_logic.py` — toàn bộ luật giải + nộp/xác nhận kết quả (không import discord/psycopg, test được).
 - `cogs/core.py` — pool Postgres, cache đọc, helper dùng chung.
 - `cogs/League.py` — cog Discord: vòng lặp 2 phút, panel đăng ký, chat riêng từng trận, slash commands.
+- `cogs/Badge.py` — cog huy hiệu: phòng thách đấu, hàng đợi 2 người, log ngày giờ nhận huy hiệu.
 - `tests/` — test luật giải, nộp/xác nhận kết quả và các chốt chặn tải.
 
 ## Kiểm thử
