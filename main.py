@@ -10,7 +10,23 @@ from discord import app_commands
 from discord.ext import commands
 from flask import Flask
 
-from cogs.core import GYM_CHANNEL_ID, initialize_storage, is_owner
+
+def _load_dotenv(path: str = ".env") -> None:
+    """Nạp `.env` khi chạy local (Render thì dùng Environment Variables)."""
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
+_load_dotenv()
+
+from cogs.core import GYM_CHANNEL_ID, initialize_storage, is_owner  # noqa: E402
 
 log = logging.getLogger(__name__)
 
