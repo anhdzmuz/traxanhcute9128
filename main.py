@@ -41,6 +41,30 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
 
 
+async def log_interaction_delay(interaction: discord.Interaction) -> bool:
+    """Ghi log khi interaction tới muộn — Discord báo "không phản hồi" sau 3 giây.
+
+    Nếu log này xuất hiện nhiều nghĩa là mạng/gateway chậm (Render hoặc Discord),
+    không phải lỗi xử lý lệnh.
+    """
+    delay = (discord.utils.utcnow() - interaction.created_at).total_seconds()
+    command = getattr(interaction.command, "qualified_name", "?")
+    if delay > 1.0:
+        log.warning(
+            "Interaction /%s đến muộn %.2fs (ping %.0fms)",
+            command,
+            delay,
+            bot.latency * 1000,
+        )
+    else:
+        log.info("Nhận /%s sau %.2fs (ping %.0fms)", command, delay, bot.latency * 1000)
+    return True
+
+
+# `CommandTree.interaction_check` là method cần gán, không phải decorator.
+bot.tree.interaction_check = log_interaction_delay
+
+
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CheckFailure):
