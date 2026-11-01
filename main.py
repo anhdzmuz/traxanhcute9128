@@ -63,8 +63,16 @@ def home():
 
 
 def run_web():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    """Web server nhỏ để health-check. Không bắt buộc — lỗi bind không được giết bot."""
+    raw = os.environ.get("PORT") or os.environ.get("SERVER_PORT") or "8080"
+    try:
+        port = int(raw)
+    except ValueError:
+        port = 8080
+    try:
+        app.run(host="0.0.0.0", port=port)
+    except Exception as exc:  # noqa: BLE001 - host không cấp port thì vẫn phải chạy bot
+        log.warning("Không mở được web server ở cổng %s: %s", port, exc)
 
 
 # Render free tắt service sau ~15 phút không có request HTTP, dù bot vẫn đang
