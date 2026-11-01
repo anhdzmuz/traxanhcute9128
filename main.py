@@ -17,7 +17,14 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Working.."
+    if not bot.is_ready():
+        return f"Working.. | Bot chưa kết nối Discord | kênh Gym: {GYM_CHANNEL_ID}"
+    user = bot.user
+    name = f"{user} ({user.id})" if user else "?"
+    return (
+        f"Working.. | Bot online: {name} | {len(bot.guilds)} server "
+        f"| ping {round(bot.latency * 1000)}ms | kênh Gym: {GYM_CHANNEL_ID}"
+    )
 
 
 def run_web():
