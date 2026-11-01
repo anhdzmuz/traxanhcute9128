@@ -49,10 +49,12 @@ def run_web():
 
 # Render free tắt service sau ~15 phút không có request HTTP, dù bot vẫn đang
 # chạy. Tự gọi vào URL công khai mỗi 10 phút để giữ instance luôn thức.
+# `RENDER_EXTERNAL_URL` do Render tự cấp, nên đổi tên/region service vẫn đúng.
 # Đặt KEEP_ALIVE_URL rỗng để tắt; khi chạy local sẽ không tự ping.
-KEEP_ALIVE_URL = os.environ.get("KEEP_ALIVE_URL", "").strip()
-if not KEEP_ALIVE_URL and os.environ.get("RENDER"):
-    KEEP_ALIVE_URL = "https://traxanhcute9128.onrender.com"
+KEEP_ALIVE_URL = (
+    os.environ.get("KEEP_ALIVE_URL", "").strip()
+    or os.environ.get("RENDER_EXTERNAL_URL", "").strip()
+)
 try:
     KEEP_ALIVE_INTERVAL = max(60, int(os.environ.get("KEEP_ALIVE_INTERVAL", "600")))
 except ValueError:

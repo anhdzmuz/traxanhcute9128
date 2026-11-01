@@ -1,0 +1,21 @@
+# Blueprint để tạo service Render mới ở region khác (IP ra khác).
+# Dùng khi IP của service cũ bị Cloudflare (Discord) chặn 1015.
+# Cách dùng: Render Dashboard -> New + -> Blueprint -> chọn repo này -> Apply.
+services:
+  - type: web
+    name: traxanhcute9128-sg
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      # Để trống thì bot tự dùng RENDER_EXTERNAL_URL của chính service này.
+      - key: KEEP_ALIVE_INTERVAL
+        value: "600"
