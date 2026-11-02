@@ -94,6 +94,7 @@ Người được chọn thì ưu tiên về 0.
 ## Lệnh
 
 ### Người chơi
+- `/slash_guide` — hướng dẫn nhanh các lệnh dành cho member.
 - `/luat` — toàn bộ luật thi đấu của Gym.
 - `/gym` — Gym Leader hiện tại, đăng ký đang mở và trạng thái giải.
 - `/dang_ky` — đăng ký / hủy đăng ký (dùng thay cho nút).

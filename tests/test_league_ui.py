@@ -308,3 +308,23 @@ def test_send_registration_panel_falls_back_to_plain_text():
     assert channel.calls[0].get("embed") is not None
     assert channel.calls[-1].get("content")
     assert "embed" not in channel.calls[-1]
+
+
+def test_slash_guide_lists_member_commands():
+    embed = league.slash_guide_embed()
+    assert "HƯỚNG DẪN LỆNH GYM" in embed.title
+    for command in (
+        "/luat",
+        "/gym",
+        "/dang_ky",
+        "/lich_su [@member]",
+        "/bang_xep_hang",
+        "/battle_bage",
+        "/check_history_bage [@member]",
+    ):
+        assert command in embed.description
+
+
+def test_slash_guide_command_is_registered():
+    names = [cmd.name for cmd in league.League.__cog_app_commands__]
+    assert "slash_guide" in names

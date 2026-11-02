@@ -173,6 +173,44 @@ RULES_NOTE = (
     "• Chat riêng tự xóa sau khi kết quả được xác nhận (ảnh minh chứng được đăng lại kèm kết quả)."
 )
 
+SLASH_GUIDE_TEXT = (
+    "## ■ GYM CHUNG\n"
+    "\n"
+    "• `/luat`\n"
+    "  ▪ Xem toàn bộ luật thi đấu của Gym\n"
+    "\n"
+    "• `/gym`\n"
+    "  ▪ Xem Gym Leader hiện tại + tình trạng giải tuần\n"
+    "\n"
+    "• `/dang_ky`\n"
+    "  ▪ Đăng ký / huỷ đăng ký tranh chức Gym Leader\n"
+    "\n"
+    "• `/lich_su [@member]`\n"
+    "  ▪ 10 trận gần nhất (bỏ trống = của bạn)\n"
+    "\n"
+    "• `/bang_xep_hang`\n"
+    "  ▪ BXH thắng/thua + số lần làm Leader\n"
+    "\n"
+    "## ■ HUY HIỆU\n"
+    "\n"
+    "• `/battle_bage`\n"
+    "  ▪ Đăng ký thách đấu lấy huy hiệu\n"
+    "\n"
+    "• `/check_history_bage [@member]`\n"
+    "  ▪ Huy hiệu đã lấy mùa này + ngày giờ nhận"
+)
+
+
+def slash_guide_embed():
+    """Embed hướng dẫn lệnh member, dùng cho /slash_guide."""
+    embed = discord.Embed(
+        title="HƯỚNG DẪN LỆNH GYM",
+        color=0x2ECC71,
+        description=SLASH_GUIDE_TEXT,
+    )
+    embed.set_footer(text="Dark Gym · TGA")
+    return embed
+
 
 def rules_embeds():
     """Toàn bộ luật của Gym, dùng cho /luat."""
@@ -1452,6 +1490,12 @@ class League(commands.Cog):
                 ephemeral=True,
             )
         await interaction.followup.send("Đã chốt đăng ký và mở giải.", ephemeral=True)
+
+    @app_commands.command(
+        name="slash_guide", description="Xem hướng dẫn các lệnh dành cho member."
+    )
+    async def slash_guide(self, interaction: discord.Interaction):
+        await interaction.response.send_message(embed=slash_guide_embed())
 
     @app_commands.command(
         name="reset", description="[OWNER] Xóa toàn bộ dữ liệu bot (xác nhận 2 lần)."
