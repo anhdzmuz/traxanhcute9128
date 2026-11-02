@@ -69,8 +69,8 @@ chạy lại. 4 người đầu là **Shadow Council**, người thứ 5 (tuỳ 
 1. Member bấm nút trên panel (`/panel_huy_hieu`) hoặc dùng `/battle_bage`.
 2. Bot mở **1 private thread** gồm người thách đấu + **4 Shadow Council** + owner.
    Bot **không** can thiệp vào trận — người thách đấu tự vào game đánh với council.
-3. Phòng gửi kèm thông báo **chuyển stardust** (mặc định 50, sửa bằng
-   `/dat_stardust so_tien:… [nguoi_nhan:@X] [noi_dung:…]`).
+3. Phòng gửi kèm thông báo **chuyển stardust cho owner (@hganh9128)**, mặc định 50,
+   sửa bằng `/dat_stardust so_tien:… [nguoi_nhan:@X] [noi_dung:…]`.
 4. Tối đa **2 người xếp hàng chờ**; phòng trước đóng thì người đầu hàng được mở phòng.
 5. Trong phòng có 3 nút:
    - **✅ Đã thách đấu council xong** — người thách đấu bấm khi đã đánh xong council.

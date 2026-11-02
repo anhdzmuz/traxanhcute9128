@@ -103,6 +103,11 @@ def test_stardust_text_without_target():
     assert "Gym Leader" in text
 
 
+def test_stardust_target_defaults_to_owner():
+    assert badge._stardust_target(None) == badge.OWNER_ID
+    assert badge._stardust_target(123) == 123
+
+
 def test_reset_view_custom_ids():
     step1 = badge._reset_view(1)
     assert [c.custom_id for c in step1.children] == ["badge:reset:1"]

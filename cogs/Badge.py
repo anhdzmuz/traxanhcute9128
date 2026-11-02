@@ -173,6 +173,11 @@ def _leader_id(holders):
     return holders[4] if len(holders) > 4 else OWNER_ID
 
 
+def _stardust_target(stored):
+    """Người nhận stardust: cấu hình /dat_stardust, mặc định là owner."""
+    return int(stored) if stored else OWNER_ID
+
+
 def _badge_sync(guild_id, user_id):
     """Trả về thời điểm nhận huy hiệu mùa này, hoặc None nếu chưa có."""
     with get_pool().connection() as conn:
@@ -653,8 +658,7 @@ async def open_room(client, guild, room_id, user_id, holders):
     await _set_thread_sync(room_id, thread.id)
 
     amount, target, note = await asyncio.to_thread(_get_stardust_sync, guild.id)
-    if target is None:
-        target = _leader_id(holders)
+    target = _stardust_target(target)
     stardust = _stardust_text(amount, target, note)
 
     mentions = " ".join(m.mention for m in invited)
@@ -1148,7 +1152,7 @@ class Badge(commands.Cog):
     )
     @app_commands.describe(
         so_tien="Số stardust yêu cầu (bỏ trống để xem cấu hình hiện tại)",
-        nguoi_nhan="Người nhận stardust (mặc định là Gym Leader / owner)",
+        nguoi_nhan="Người nhận stardust (mặc định là owner @hganh9128)",
         noi_dung='Câu thông báo thay thế hoàn toàn (gõ "-" để xoá, bỏ trống để giữ nguyên)',
     )
     async def dat_stardust(
@@ -1181,11 +1185,7 @@ class Badge(commands.Cog):
             amount, target, note_now = await asyncio.to_thread(
                 _get_stardust_sync, interaction.guild_id
             )
-            if target is None:
-                holders = await asyncio.to_thread(
-                    _get_holders_sync, interaction.guild_id
-                )
-                target = _leader_id(holders) if holders else None
+            target = _stardust_target(target)
             target_text = f"<@{target}>" if target else "(chưa đặt)"
             return await interaction.followup.send(
                 f"**Stardust hiện tại:** {amount}\n"
@@ -1209,9 +1209,7 @@ class Badge(commands.Cog):
         amount, target, note_now = await asyncio.to_thread(
             _get_stardust_sync, interaction.guild_id
         )
-        if target is None:
-            holders = await asyncio.to_thread(_get_holders_sync, interaction.guild_id)
-            target = _leader_id(holders) if holders else None
+        target = _stardust_target(target)
         await interaction.followup.send(
             "Đã cập nhật thông báo stardust:\n"
             + _stardust_text(amount, target, note_now),
@@ -1255,8 +1253,7 @@ class Badge(commands.Cog):
         amount, target, note = await asyncio.to_thread(
             _get_stardust_sync, interaction.guild_id
         )
-        if target is None:
-            target = _leader_id(holders)
+        target = _stardust_target(target)
         stardust = _stardust_text(amount, target, note)
 
         embed = discord.Embed(
