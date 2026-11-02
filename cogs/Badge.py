@@ -280,40 +280,41 @@ def _close_room_sync(room_id, won):
             )
         conn.execute("UPDATE badge_rooms SET status = 'closed' WHERE id = %s", (room_id,))
 
-        nxt = conn.execute(
-            "SELECT user_id FROM badge_queue WHERE guild_id = %s "
-            "ORDER BY created_at LIMIT 1",
+        queue = conn.execute(
+            "SELECT user_id FROM badge_queue WHERE guild_id = %s ORDER BY created_at",
             (guild_id,),
-        ).fetchone()
+        ).fetchall()
         next_user = None
         next_room = None
         next_position = None
         next_holder = None
-        if nxt:
-            next_user = int(nxt[0])
+        for row_q in queue:
+            candidate = int(row_q[0])
             conn.execute(
                 "DELETE FROM badge_queue WHERE guild_id = %s AND user_id = %s",
-                (guild_id, next_user),
+                (guild_id, candidate),
             )
             earned = conn.execute(
                 "SELECT COUNT(*) FROM badge_history "
                 "WHERE guild_id = %s AND user_id = %s",
-                (guild_id, next_user),
+                (guild_id, candidate),
             ).fetchone()[0]
-            next_position = int(earned) + 1
-            next_holder = _holder_at(next_position)
-            if next_holder is None:
+            candidate_position = int(earned) + 1
+            candidate_holder = _holder_at(candidate_position)
+            if candidate_holder is None:
                 # Người chờ đã lấy đủ huy hiệu (cấu hình vừa đổi): bỏ qua.
-                next_user = None
-                next_position = None
-            else:
-                next_room = int(
-                    conn.execute(
-                        "INSERT INTO badge_rooms (guild_id, user_id, position) "
-                        "VALUES (%s, %s, %s) RETURNING id",
-                        (guild_id, next_user, next_position),
-                    ).fetchone()[0]
-                )
+                continue
+            next_user = candidate
+            next_position = candidate_position
+            next_holder = candidate_holder
+            next_room = int(
+                conn.execute(
+                    "INSERT INTO badge_rooms (guild_id, user_id, position) "
+                    "VALUES (%s, %s, %s) RETURNING id",
+                    (guild_id, next_user, next_position),
+                ).fetchone()[0]
+            )
+            break
 
     return "ok", {
         "guild_id": guild_id,
