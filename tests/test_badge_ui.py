@@ -38,10 +38,12 @@ HOLDERS = [101, 102, 103, 104, 105]
 def test_room_view_custom_ids_and_callbacks():
     view = badge._room_view(42)
     ids = [child.custom_id for child in view.children]
-    assert ids == ["badge:win:42", "badge:lose:42"]
+    assert ids == ["badge:done:42", "badge:cancel:42"]
     # Callback rỗng để view trong bộ nhớ không báo "unknown callback";
     # xử lý thật nằm ở on_interaction.
     assert all(child.callback is not None for child in view.children)
+    labels = [child.label for child in view.children]
+    assert labels == ["Đã đánh xong", "Hủy thách đấu"]
 
 
 def test_join_view_is_persistent():
@@ -50,15 +52,30 @@ def test_join_view_is_persistent():
     assert view.timeout is None
 
 
-def test_room_embed_uses_holder_name():
+def test_room_embed_uses_holder_name_and_stardust():
     challenger = FakeMember(2001, "ThachDau")
     holder = FakeMember(101, "Shady")
-    embed = badge._room_embed(challenger, holder)
+    embed = badge._room_embed(challenger, holder, "chuyển **50 stardust** cho <@9>")
     assert "Shady" in embed.title
     assert challenger.mention in embed.description
     assert holder.mention in embed.description
+    assert "50 stardust" in embed.description
     assert "Huy hiệu 1" not in embed.description
-    assert "Huy hiệu 1" not in (embed.footer.text or "")
+
+
+def test_stardust_text_default_and_custom():
+    text = badge._stardust_text(50, 123, None)
+    assert "50 stardust" in text
+    assert "<@123>" in text
+
+    custom = badge._stardust_text(50, 123, "Câu riêng của owner")
+    assert custom == "Câu riêng của owner"
+
+
+def test_stardust_text_without_target():
+    text = badge._stardust_text(75, None, None)
+    assert "75 stardust" in text
+    assert "Gym Leader" in text
 
 
 def test_reset_view_custom_ids():
@@ -97,6 +114,7 @@ def test_commands_are_registered_with_expected_names():
         "battle_bage",
         "check_history_bage",
         "dat_council",
+        "dat_stardust",
         "panel_huy_hieu",
         "reset_huy_hieu",
     ]

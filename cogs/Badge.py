@@ -4,12 +4,13 @@ Luồng hoạt động:
 - Owner chạy ``/dat_council`` mention tối đa 5 người giữ huy hiệu theo thứ tự từ thấp
   đến cao (4 Shadow Council + Gym Leader, có thể bỏ trống người cuối).
 - Member bấm nút trên panel (``/panel_huy_hieu``) hoặc dùng ``/battle_bage``.
-- Bot mở **1 phòng** (private thread) gồm member + những người giữ huy hiệu; tối đa
-  **2 người xếp hàng chờ**. Khi phòng đóng, người chờ đầu tiên được mở phòng.
-- Shadow Council / Admin bấm ``Thắng`` (trao huy hiệu) hoặc ``Thua`` (đóng
-  phòng). Bot ghi log thời gian nhận huy hiệu vào PostgreSQL, tag owner để đóng
-  phòng và nhường slot.
-- ``/check_history_bage`` xem lịch sử nhận huy hiệu (ngày giờ).
+- Bot mở **1 phòng** (private thread) chỉ gồm người thách đấu + đúng người giữ huy hiệu
+  cần đánh (+ owner), tối đa **2 người xếp hàng chờ**. Phòng gửi kèm thông báo yêu
+  cầu chuyển stardust (sửa bằng ``/dat_stardust``).
+- Shadow Council / Admin bấm ``✅ Đã đánh xong`` (tính huy hiệu + mở phòng kế tiếp ngay)
+  hoặc ``❌ Hủy thách đấu`` (đóng phòng, không tính).
+- ``/check_history_bage`` xem huy hiệu đã lấy và ngày giờ.
+- ``/reset_huy_hieu`` xoá toàn bộ huy hiệu đã nhận của mọi người.
 """
 
 import asyncio
@@ -34,6 +35,8 @@ log = logging.getLogger(__name__)
 MAX_QUEUE = 2
 COLOR = 0x8E44AD
 JOIN_CUSTOM_ID = "badge:join"
+DEFAULT_STARDUST = 50
+_UNSET = object()
 
 
 # --------------------------------------------------------------------------- #
@@ -56,6 +59,19 @@ def _init_tables():
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """
+        )
+        # Bổ sung cột cho bảng đã tạo từ phiên bản trước.
+        conn.execute(
+            "ALTER TABLE badge_config "
+            "ADD COLUMN IF NOT EXISTS stardust_amount INT NOT NULL DEFAULT 50"
+        )
+        conn.execute(
+            "ALTER TABLE badge_config "
+            "ADD COLUMN IF NOT EXISTS stardust_target BIGINT"
+        )
+        conn.execute(
+            "ALTER TABLE badge_config "
+            "ADD COLUMN IF NOT EXISTS stardust_note TEXT"
         )
         conn.execute(
             """
@@ -155,6 +171,45 @@ def _history_sync(guild_id, user_id):
             """,
             (guild_id, user_id),
         ).fetchall()
+
+
+def _get_stardust_sync(guild_id):
+    """Trả về (số stardust, người nhận, ghi chú) của yêu cầu chuyển stardust."""
+    with get_pool().connection() as conn:
+        row = conn.execute(
+            "SELECT stardust_amount, stardust_target, stardust_note "
+            "FROM badge_config WHERE guild_id = %s",
+            (guild_id,),
+        ).fetchone()
+    if not row:
+        return DEFAULT_STARDUST, None, None
+    amount = int(row[0]) if row[0] is not None else DEFAULT_STARDUST
+    target = int(row[1]) if row[1] else None
+    return amount, target, row[2]
+
+
+def _set_stardust_sync(guild_id, amount=None, target=None, note=_UNSET):
+    """Sửa yêu cầu stardust. Trả về True nếu đã cấu hình huy hiệu trước đó."""
+    fields = []
+    values = []
+    if amount is not None:
+        fields.append("stardust_amount = %s")
+        values.append(int(amount))
+    if target is not None:
+        fields.append("stardust_target = %s")
+        values.append(int(target))
+    if note is not _UNSET:
+        fields.append("stardust_note = %s")
+        values.append(note)
+    if not fields:
+        return _get_stardust_sync(guild_id) != (50, None, None)
+    values.append(guild_id)
+    with get_pool().connection() as conn:
+        cursor = conn.execute(
+            f"UPDATE badge_config SET {', '.join(fields)} WHERE guild_id = %s",
+            values,
+        )
+        return cursor.rowcount > 0
 
 
 def _queue_index(conn, guild_id, user_id):
@@ -280,15 +335,33 @@ def _close_room_sync(room_id, won):
             )
         conn.execute("UPDATE badge_rooms SET status = 'closed' WHERE id = %s", (room_id,))
 
-        queue = conn.execute(
-            "SELECT user_id FROM badge_queue WHERE guild_id = %s ORDER BY created_at",
-            (guild_id,),
-        ).fetchall()
         next_user = None
         next_room = None
         next_position = None
         next_holder = None
+        advanced = False
+
+        # Thắng và còn người kế tiếp: mở phòng luôn cho chính người vừa thắng.
+        if won and _holder_at(position + 1) is not None:
+            next_user = user_id
+            next_position = position + 1
+            next_holder = _holder_at(next_position)
+            next_room = int(
+                conn.execute(
+                    "INSERT INTO badge_rooms (guild_id, user_id, position) "
+                    "VALUES (%s, %s, %s) RETURNING id",
+                    (guild_id, next_user, next_position),
+                ).fetchone()[0]
+            )
+            advanced = True
+
+        queue = conn.execute(
+            "SELECT user_id FROM badge_queue WHERE guild_id = %s ORDER BY created_at",
+            (guild_id,),
+        ).fetchall()
         for row_q in queue:
+            if advanced:
+                break
             candidate = int(row_q[0])
             conn.execute(
                 "DELETE FROM badge_queue WHERE guild_id = %s AND user_id = %s",
@@ -327,6 +400,7 @@ def _close_room_sync(room_id, won):
         "next_room": next_room,
         "next_position": next_position,
         "next_holder": next_holder,
+        "advanced": advanced,
     }
 
 
@@ -399,14 +473,25 @@ def can_judge(user, holders) -> bool:
     return bool(getattr(user, "guild_permissions", None) and user.guild_permissions.administrator)
 
 
-def _room_embed(challenger, holder):
+def _stardust_text(amount, target, note):
+    """Nội dung yêu cầu chuyển stardust. `note` thay thế toàn bộ câu mặc định."""
+    if note:
+        return note
+    if target:
+        return f"**Yêu cầu:** chuyển **{amount} stardust** cho <@{target}> trước khi đánh."
+    return f"**Yêu cầu:** chuyển **{amount} stardust** cho Gym Leader trước khi đánh."
+
+
+def _room_embed(challenger, holder, stardust_text):
     embed = discord.Embed(
         title=f"🏅 THÁCH ĐẤU · {holder.display_name}",
         color=COLOR,
         description=(
             f"{challenger.mention} thách đấu {holder.mention} để lấy huy hiệu.\n\n"
-            "Kết quả do **Shadow Council** hoặc **Admin** bấm bên dưới.\n"
-            "`Thắng` = trao huy hiệu và ghi log · `Thua` = đóng phòng, không trao."
+            f"{stardust_text}\n\n"
+            "Đánh xong, **Shadow Council** hoặc **Admin** bấm bên dưới:\n"
+            "`✅ Đã đánh xong` = tính huy hiệu và mở phòng kế tiếp · "
+            "`❌ Hủy thách đấu` = đóng phòng, không tính."
         ),
     )
     embed.set_footer(text="Dark Gym · Shadow Council")
@@ -443,13 +528,13 @@ def _reset_view(step):
 
 
 def _room_view(room_id):
-    """Nút kết quả. Callback rỗng: xử lý thật nằm ở `on_interaction` để nút
+    """Nút trong phòng. Callback rỗng: xử lý thật nằm ở `on_interaction` để nút
     vẫn hoạt động sau khi bot restart (view không còn trong bộ nhớ).
     """
     view = discord.ui.View(timeout=None)
     for action, label, emoji, style in (
-        ("win", "Thắng – trao huy hiệu", "✅", discord.ButtonStyle.success),
-        ("lose", "Thua – đóng phòng", "❌", discord.ButtonStyle.danger),
+        ("done", "Đã đánh xong", "✅", discord.ButtonStyle.success),
+        ("cancel", "Hủy thách đấu", "❌", discord.ButtonStyle.danger),
     ):
         button = discord.ui.Button(
             label=label,
@@ -503,11 +588,7 @@ async def open_room(client, guild, room_id, user_id, position, holders):
         auto_archive_duration=1440,
     )
 
-    invited = [challenger]
-    for hid in holders:
-        member = await _fetch_member(guild, hid)
-        if member is not None and member not in invited:
-            invited.append(member)
+    invited = [challenger, holder]
     owner = await _fetch_member(guild, OWNER_ID)
     if owner is not None and owner not in invited:
         invited.append(owner)
@@ -520,8 +601,13 @@ async def open_room(client, guild, room_id, user_id, position, holders):
 
     await _set_thread_sync(room_id, thread.id)
 
+    amount, target, note = await asyncio.to_thread(_get_stardust_sync, guild.id)
+    if target is None and holders:
+        target = holders[-1]
+    stardust = _stardust_text(amount, target, note)
+
     mentions = " ".join(m.mention for m in invited)
-    embed = _room_embed(challenger, holder)
+    embed = _room_embed(challenger, holder, stardust)
     await thread.send(content=mentions, embed=embed, view=_room_view(room_id))
     return thread
 
@@ -674,6 +760,10 @@ class Badge(commands.Cog):
             return
         custom_id = (interaction.data or {}).get("custom_id") or ""
         try:
+            if custom_id.startswith("badge:done:") or custom_id.startswith("badge:cancel:"):
+                _, action, raw_id = custom_id.split(":")
+                return await self._on_result(interaction, int(raw_id), action == "done")
+            # Tương thích nút của phòng tạo trước khi đổi tên.
             if custom_id.startswith("badge:win:") or custom_id.startswith("badge:lose:"):
                 _, action, raw_id = custom_id.split(":")
                 return await self._on_result(interaction, int(raw_id), action == "win")
@@ -744,13 +834,11 @@ class Badge(commands.Cog):
             )
             if payload["won"]:
                 text = (
-                    f"🏅 <@{payload['user_id']}> đã vượt qua {holder} và lấy được huy hiệu! "
-                    f"<@{OWNER_ID}> phòng đã xong, đã nhường slot."
+                    f"🏅 <@{payload['user_id']}> đã vượt qua {holder} và lấy được huy hiệu!"
                 )
             else:
                 text = (
-                    f"❌ <@{payload['user_id']}> chưa vượt qua {holder}. "
-                    f"<@{OWNER_ID}> phòng đã xong, đã nhường slot."
+                    f"❌ <@{payload['user_id']}> đã hủy thách đấu với {holder}."
                 )
             try:
                 await channel.send(text, allowed_mentions=discord.AllowedMentions(users=True))
@@ -759,15 +847,28 @@ class Badge(commands.Cog):
 
         next_thread = await _promote_next(self.bot, guild, payload)
         if next_thread is not None and channel is not None:
-            try:
-                await channel.send(
+            if payload.get("advanced"):
+                text = (
+                    f"➡️ <@{payload['next_user']}> tiếp tục thách đấu "
+                    f"<@{payload['next_holder']}> {next_thread.mention}"
+                )
+            else:
+                text = (
                     f"➡️ Phòng tiếp theo: <@{payload['next_user']}> vs "
                     f"<@{payload['next_holder']}> {next_thread.mention}"
                 )
+            try:
+                await channel.send(text, allowed_mentions=discord.AllowedMentions(users=True))
             except discord.HTTPException:
                 pass
 
-        await interaction.followup.send("Đã ghi nhận kết quả.", ephemeral=True)
+        if payload.get("won") and not payload.get("next_room"):
+            await interaction.followup.send(
+                "Đã tính huy hiệu cuối cùng — người này đã lấy đủ bộ huy hiệu mùa này!",
+                ephemeral=True,
+            )
+        else:
+            await interaction.followup.send("Đã ghi nhận kết quả.", ephemeral=True)
 
     # ------------------------------------------------------------------ #
     # Reset huy hiệu (xác nhận 2 lần)
@@ -923,6 +1024,82 @@ class Badge(commands.Cog):
         )
 
     @app_commands.command(
+        name="dat_stardust",
+        description="[OWNER] Xem/sửa yêu cầu chuyển stardust khi mở phòng huy hiệu.",
+    )
+    @app_commands.describe(
+        so_tien="Số stardust yêu cầu (bỏ trống để xem cấu hình hiện tại)",
+        nguoi_nhan="Người nhận stardust (mặc định là người cuối trong /dat_council)",
+        noi_dung='Câu thông báo thay thế hoàn toàn (gõ "-" để xoá, bỏ trống để giữ nguyên)',
+    )
+    async def dat_stardust(
+        self,
+        interaction: discord.Interaction,
+        so_tien: int | None = None,
+        nguoi_nhan: discord.Member | None = None,
+        noi_dung: str | None = None,
+    ):
+        if not is_owner(interaction.user.id):
+            return await interaction.response.send_message(
+                "Chỉ người quản lý Gym mới dùng được lệnh này.", ephemeral=True
+            )
+        if so_tien is not None and so_tien < 0:
+            return await interaction.response.send_message(
+                "Số stardust phải là số không âm.", ephemeral=True
+            )
+        await interaction.response.defer(ephemeral=True)
+        if not await asyncio.to_thread(_ensure_tables):
+            return await interaction.followup.send(
+                "Hệ thống huy hiệu đang kết nối lại database, thử lại sau ít phút.",
+                ephemeral=True,
+            )
+
+        note = _UNSET
+        if noi_dung is not None:
+            note = None if noi_dung.strip() == "-" else noi_dung.strip()
+
+        if so_tien is None and nguoi_nhan is None and note is _UNSET:
+            amount, target, note_now = await asyncio.to_thread(
+                _get_stardust_sync, interaction.guild_id
+            )
+            if target is None:
+                holders = await asyncio.to_thread(
+                    _get_holders_sync, interaction.guild_id
+                )
+                target = holders[-1] if holders else None
+            target_text = f"<@{target}>" if target else "(chưa đặt)"
+            return await interaction.followup.send(
+                f"**Stardust hiện tại:** {amount}\n"
+                f"**Người nhận:** {target_text}\n"
+                f"**Câu thông báo:** {note_now or '(mặc định)'}",
+                ephemeral=True,
+            )
+
+        updated = await asyncio.to_thread(
+            _set_stardust_sync,
+            interaction.guild_id,
+            so_tien,
+            nguoi_nhan.id if nguoi_nhan else None,
+            note,
+        )
+        if not updated:
+            return await interaction.followup.send(
+                "Chưa có cấu hình huy hiệu. Chạy `/dat_council` trước.", ephemeral=True
+            )
+
+        amount, target, note_now = await asyncio.to_thread(
+            _get_stardust_sync, interaction.guild_id
+        )
+        if target is None:
+            holders = await asyncio.to_thread(_get_holders_sync, interaction.guild_id)
+            target = holders[-1] if holders else None
+        await interaction.followup.send(
+            "Đã cập nhật thông báo stardust:\n"
+            + _stardust_text(amount, target, note_now),
+            ephemeral=True,
+        )
+
+    @app_commands.command(
         name="panel_huy_hieu",
         description="[OWNER] Đăng panel đăng ký đánh lấy huy hiệu.",
     )
@@ -956,13 +1133,21 @@ class Badge(commands.Cog):
             name = member.mention if member else f"<@{holder_id}>"
             lines.append(f"• {name}")
 
+        amount, target, note = await asyncio.to_thread(
+            _get_stardust_sync, interaction.guild_id
+        )
+        if target is None and holders:
+            target = holders[-1]
+        stardust = _stardust_text(amount, target, note)
+
         embed = discord.Embed(
             title="🏅 THÁCH ĐẤU LẤY HUY HIỆU",
             color=COLOR,
             description=(
                 "Lần lượt vượt qua từng người giữ huy hiệu để lấy đủ bộ huy hiệu mùa này.\n\n"
                 + "\n".join(lines)
-                + "\n\n**Cách tham gia:** bấm nút bên dưới hoặc dùng `/battle_bage`.\n"
+                + f"\n\n{stardust}\n\n"
+                + "**Cách tham gia:** bấm nút bên dưới hoặc dùng `/battle_bage`.\n"
                 f"Mỗi lúc chỉ mở **1 phòng**, tối đa **{MAX_QUEUE} người** xếp hàng chờ."
             ),
             timestamp=discord.utils.utcnow(),

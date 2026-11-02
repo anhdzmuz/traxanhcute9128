@@ -67,14 +67,19 @@ Owner đặt danh sách bằng `/dat_council @1 @2 @3 @4 [@5]` — một lần, 
 chạy lại. **Người thứ 5 có thể để trống.**
 
 1. Member bấm nút trên panel (`/panel_huy_hieu`) hoặc dùng `/battle_bage`.
-2. Bot mở **1 private thread** gồm người thách đấu + những người giữ huy hiệu + owner.
-3. Tối đa **2 người xếp hàng chờ**; phòng trước đóng thì người đầu hàng được mở phòng.
-4. **Shadow Council / Admin** bấm **✅ Thắng** (trao huy hiệu + ghi log) hoặc
-   **❌ Thua** (đóng phòng, không trao).
-5. Bot khoá thread, tag owner trong kênh Gym để đóng phòng và nhường slot.
-6. `/check_history_bage [member]` xem **"Đã lấy huy hiệu mùa này"** (ai, ngày giờ) và
+2. Bot mở **1 private thread** chỉ gồm người thách đấu + **đúng người giữ huy hiệu cần
+   đánh** (+ owner). Các trận còn lại member tự hẹn nhau.
+3. Phòng gửi kèm thông báo **chuyển stardust** cho Gym Leader (mặc định 50, sửa bằng
+   `/dat_stardust so_tien:… [nguoi_nhan:@X] [noi_dung:…]`).
+4. Tối đa **2 người xếp hàng chờ**; phòng trước đóng thì người đầu hàng được mở phòng.
+5. **Shadow Council / Admin** bấm:
+   - **✅ Đã đánh xong** — tính huy hiệu, ghi log và **mở phòng kế tiếp ngay** cho
+     người vừa thắng.
+   - **❌ Hủy thách đấu** — đóng phòng, không tính huy hiệu, nhường slot.
+6. Bot khoá thread và thông báo kết quả trong kênh Gym.
+7. `/check_history_bage [member]` xem **"Đã lấy huy hiệu mùa này"** (ai, ngày giờ) và
    **"Cần thách đấu với"** người kế tiếp.
-7. `/reset_huy_hieu` (owner, xác nhận 2 lần) xoá **toàn bộ huy hiệu đã nhận của mọi
+8. `/reset_huy_hieu` (owner, xác nhận 2 lần) xoá **toàn bộ huy hiệu đã nhận của mọi
    người**, xoá hàng đợi và đóng các phòng đang mở. Danh sách người giữ vẫn giữ nguyên.
 
 Log lưu ở PostgreSQL (`badge_config`, `badge_rooms`, `badge_queue`, `badge_history`),
@@ -108,6 +113,7 @@ Người được chọn thì ưu tiên về 0.
 - `/dat_council @1 @2 @3 @4 [@5]` — đặt thứ tự người giữ huy hiệu từ thấp đến cao (người thứ 5 có thể để trống).
 - `/panel_huy_hieu` — đăng panel đăng ký đánh lấy huy hiệu.
 - `/reset_huy_hieu` — xoá toàn bộ huy hiệu đã nhận của mọi người (xác nhận 2 lần).
+- `/dat_stardust [so_tien] [nguoi_nhan] [noi_dung]` — xem/sửa thông báo chuyển stardust (bỏ trống hết để xem).
 
 ## Cấu hình
 
