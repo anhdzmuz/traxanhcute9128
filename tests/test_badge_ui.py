@@ -1,13 +1,16 @@
 """Test các thành phần UI/logic của cog Badge (không cần Discord hay DB)."""
 
+import asyncio
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import discord  # noqa: E402
+import pytest  # noqa: E402
 
 import cogs.Badge as badge  # noqa: E402
+import cogs.core as core  # noqa: E402
 
 
 class FakePermissions:
@@ -176,3 +179,163 @@ def test_table_init_short_circuits_when_ready():
 
 def test_queue_limit_is_two():
     assert badge.MAX_QUEUE == 2
+
+
+class FakeChannelClient:
+    def __init__(self, channel):
+        self.channel = channel
+
+    def get_channel(self, _channel_id):
+        return self.channel
+
+    async def fetch_channel(self, _channel_id):
+        return None
+
+
+class FakeGuild:
+    def __init__(self, channel):
+        self.channel = channel
+
+    def get_channel(self, _channel_id):
+        return self.channel
+
+
+def make_thread(parent):
+    thread = object.__new__(discord.Thread)
+    thread.guild = FakeGuild(parent)
+    thread.parent_id = 1
+    return thread
+
+
+def test_thread_parent_follows_thread_to_its_parent():
+    text = object.__new__(discord.TextChannel)
+    forum = object.__new__(discord.ForumChannel)
+    thread = make_thread(text)
+
+    assert core.thread_parent(thread) is text
+    assert core.thread_parent(text) is text
+    assert core.thread_parent(forum) is forum
+    assert core.thread_parent(None) is None
+
+
+def test_resolve_thread_parent_accepts_text_thread_and_forum():
+    text = object.__new__(discord.TextChannel)
+    forum = object.__new__(discord.ForumChannel)
+    thread = make_thread(text)
+
+    parent, kind = asyncio.run(core.resolve_thread_parent(FakeChannelClient(text), 1))
+    assert parent is text
+    assert kind == "text"
+
+    parent, kind = asyncio.run(core.resolve_thread_parent(FakeChannelClient(thread), 1))
+    assert parent is text
+    assert kind == "text"
+
+    parent, kind = asyncio.run(core.resolve_thread_parent(FakeChannelClient(forum), 1))
+    assert parent is forum
+    assert kind == "forum"
+
+
+def test_resolve_thread_parent_reports_missing_channel():
+    with pytest.raises(RuntimeError) as excinfo:
+        asyncio.run(core.resolve_thread_parent(FakeChannelClient(None), 1565716218084855959))
+
+    message = str(excinfo.value)
+    assert "1565716218084855959" in message
+    assert "không tìm thấy kênh" in message
+    assert "MATCH_CHANNEL_ID" in message
+
+
+class FakeParentClient:
+    def __init__(self, channels):
+        self.channels = channels
+
+    def get_channel(self, channel_id):
+        return self.channels.get(channel_id)
+
+    async def fetch_channel(self, channel_id):
+        return self.channels.get(channel_id)
+
+
+def test_resolve_thread_parent_fetches_uncached_parent():
+    text = object.__new__(discord.TextChannel)
+    thread = object.__new__(discord.Thread)
+    thread.guild = FakeGuild(None)
+    thread.parent_id = 777
+
+    parent, kind = asyncio.run(
+        core.resolve_thread_parent(FakeParentClient({1: thread, 777: text}), 1)
+    )
+
+    assert parent is text
+    assert kind == "text"
+
+
+class FakeRoomMember(FakeMember):
+    def __init__(self, user_id, name):
+        super().__init__(user_id, name)
+
+
+class FakeRoomThread:
+    id = 999
+    mention = "<#999>"
+
+    def __init__(self):
+        self.added = []
+        self.sent = []
+
+    async def add_user(self, member):
+        self.added.append(member)
+
+    async def send(self, **kwargs):
+        self.sent.append(kwargs)
+
+
+class FakeRoomGuild:
+    id = 1
+
+    def __init__(self, members):
+        self.members = members
+
+    def get_member(self, user_id):
+        return self.members.get(user_id)
+
+    async def fetch_member(self, user_id):
+        return self.members.get(user_id)
+
+
+class FakeTextChannel(discord.TextChannel):
+    def __init__(self):
+        self.created = {}
+
+    async def create_thread(self, **kwargs):
+        self.created.update(kwargs)
+        return FakeRoomThread()
+
+
+def test_open_room_creates_private_thread_under_parent_channel(monkeypatch):
+    text = FakeTextChannel()
+    thread_channel = make_thread(text)
+    client = FakeParentClient({1: thread_channel})
+
+    challenger = FakeRoomMember(500, "Challenger")
+    council = [FakeRoomMember(101 + i, f"Council {i}") for i in range(4)]
+    owner = FakeRoomMember(badge.OWNER_ID, "Owner")
+    guild = FakeRoomGuild({m.id: m for m in [challenger, *council, owner]})
+
+    saved = []
+    monkeypatch.setattr(badge, "MATCH_CHANNEL_ID", 1)
+    monkeypatch.setattr(badge, "_get_stardust_sync", lambda _guild_id: (50, None, None))
+    monkeypatch.setattr(
+        badge, "_set_thread_sync", lambda room_id, thread_id: saved.append((room_id, thread_id))
+    )
+
+    thread = asyncio.run(
+        badge.open_room(client, guild, 42, challenger.id, [m.id for m in council])
+    )
+
+    assert text.created["type"] is discord.ChannelType.private_thread
+    assert text.created["invitable"] is False
+    assert [m.id for m in thread.added] == [500, 101, 102, 103, 104, badge.OWNER_ID]
+    assert thread.sent and thread.sent[0]["embed"].title.startswith("🏅")
+    assert saved == [(42, thread.id)]

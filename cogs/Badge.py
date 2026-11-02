@@ -31,6 +31,7 @@ from cogs.core import (
     get_pool,
     is_gym_channel,
     is_owner,
+    resolve_thread_parent,
 )
 
 log = logging.getLogger(__name__)
@@ -615,9 +616,7 @@ async def open_room(client, guild, room_id, user_id, holders):
     Phòng gồm: người thách đấu + Shadow Council + Gym Leader/owner.
     Bot chỉ tạo phòng, không can thiệp vào các trận.
     """
-    parent = await get_channel(client, MATCH_CHANNEL_ID)
-    if not isinstance(parent, discord.TextChannel):
-        raise RuntimeError(f"Kênh trận {MATCH_CHANNEL_ID} không phải text channel.")
+    parent, kind = await resolve_thread_parent(client, MATCH_CHANNEL_ID)
 
     challenger = await _fetch_member(guild, user_id)
     if challenger is None:
@@ -631,25 +630,10 @@ async def open_room(client, guild, room_id, user_id, holders):
     if not council:
         raise RuntimeError("Chưa có Shadow Council, hãy chạy /dat_council lại.")
 
-    thread = await parent.create_thread(
-        name=f"🏅 {challenger.display_name} vs Shadow Council"[:95],
-        type=discord.ChannelType.private_thread,
-        invitable=False,
-        auto_archive_duration=1440,
-    )
-
     invited = [challenger, *council]
     owner = await _fetch_member(guild, OWNER_ID)
     if owner is not None and owner not in invited:
         invited.append(owner)
-
-    for member in invited:
-        try:
-            await thread.add_user(member)
-        except discord.HTTPException:
-            log.warning("Không thêm được %s vào phòng huy hiệu", member.id)
-
-    await _set_thread_sync(room_id, thread.id)
 
     amount, target, note = await asyncio.to_thread(_get_stardust_sync, guild.id)
     target = _stardust_target(target)
@@ -657,7 +641,39 @@ async def open_room(client, guild, room_id, user_id, holders):
 
     mentions = " ".join(m.mention for m in invited)
     embed = _room_embed(challenger, council, stardust)
-    await thread.send(content=mentions, embed=embed, view=_room_view(room_id))
+    view = _room_view(room_id)
+    name = f"🏅 {challenger.display_name} vs Shadow Council"[:95]
+
+    if kind == "forum":
+        # Forum không hỗ trợ private thread; phòng sẽ là bài đăng công khai.
+        log.warning(
+            "Kênh trận %s là forum — phòng huy hiệu sẽ công khai, "
+            "nên dùng Text Channel nếu cần riêng tư.",
+            MATCH_CHANNEL_ID,
+        )
+        created = await parent.create_thread(
+            name=name,
+            auto_archive_duration=1440,
+            content=mentions,
+            embed=embed,
+            view=view,
+        )
+        thread = created.thread
+    else:
+        thread = await parent.create_thread(
+            name=name,
+            type=discord.ChannelType.private_thread,
+            invitable=False,
+            auto_archive_duration=1440,
+        )
+        for member in invited:
+            try:
+                await thread.add_user(member)
+            except discord.HTTPException:
+                log.warning("Không thêm được %s vào phòng huy hiệu", member.id)
+        await thread.send(content=mentions, embed=embed, view=view)
+
+    await asyncio.to_thread(_set_thread_sync, room_id, thread.id)
     return thread
 
 

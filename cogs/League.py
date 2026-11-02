@@ -30,6 +30,7 @@ from cogs.core import (
     is_gym_channel,
     is_owner,
     read_data,
+    resolve_thread_parent,
     update_data,
 )
 
@@ -851,9 +852,10 @@ class League(commands.Cog):
         if not pending:
             return created
 
-        parent = await get_channel(self.bot, MATCH_CHANNEL_ID)
-        if not isinstance(parent, discord.TextChannel):
-            log.warning("Kênh trận đấu %s không phải text channel", MATCH_CHANNEL_ID)
+        try:
+            parent, kind = await resolve_thread_parent(self.bot, MATCH_CHANNEL_ID)
+        except RuntimeError as exc:
+            log.warning("%s", exc)
             return created
 
         guild = parent.guild
@@ -886,25 +888,41 @@ class League(commands.Cog):
             best_of = "BO3" if match["best_of"] == 3 else "BO1"
             names = " vs ".join(member.display_name[:14] for member in members) or "Trận đấu"
             wl = data["tournament"].get("wl") or 0
-            try:
-                thread = await parent.create_thread(
-                    name=f"⚔️ WL{wl} · {best_of} · {names}"[:95],
-                    type=discord.ChannelType.private_thread,
-                    invitable=False,
-                    auto_archive_duration=1440,
-                )
-            except discord.HTTPException:
-                log.exception("Không tạo được chat riêng cho trận #%s", match["id"])
-                continue
+            thread_name = f"⚔️ WL{wl} · {best_of} · {names}"[:95]
 
             invited = list(members)
             if owner is not None and owner not in invited:
                 invited.append(owner)
-            for member in invited:
-                try:
-                    await thread.add_user(member)
-                except discord.HTTPException:
-                    log.warning("Không thêm được %s vào chat riêng", member.id)
+            mentions = " ".join(member.mention for member in invited)
+
+            try:
+                if kind == "forum":
+                    # Forum không có private thread; chat riêng thành bài đăng công khai.
+                    log.warning(
+                        "Kênh trận %s là forum — chat riêng của trận sẽ công khai.",
+                        MATCH_CHANNEL_ID,
+                    )
+                    created_thread = await parent.create_thread(
+                        name=thread_name,
+                        auto_archive_duration=1440,
+                        content=mentions,
+                    )
+                    thread = created_thread.thread
+                else:
+                    thread = await parent.create_thread(
+                        name=thread_name,
+                        type=discord.ChannelType.private_thread,
+                        invitable=False,
+                        auto_archive_duration=1440,
+                    )
+                    for member in invited:
+                        try:
+                            await thread.add_user(member)
+                        except discord.HTTPException:
+                            log.warning("Không thêm được %s vào chat riêng", member.id)
+            except discord.HTTPException:
+                log.exception("Không tạo được chat riêng cho trận #%s", match["id"])
+                continue
 
             await thread.send(embed=_thread_panel(data, match), view=_submit_view(match["id"]))
             await update_data(

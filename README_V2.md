@@ -123,9 +123,13 @@ Người được chọn thì ưu tiên về 0.
 |---|---|
 | `DISCORD_TOKEN` | Token bot. |
 | `DATABASE_URL` | Chuỗi kết nối Postgres (Neon). |
-| `MATCH_CHANNEL_ID` | Kênh chứa chat riêng của từng trận. Bỏ trống → dùng `GYM_CHANNEL_ID`. |
+| `MATCH_CHANNEL_ID` | Kênh chứa chat riêng của từng trận. Bỏ trống → dùng `GYM_CHANNEL_ID`. Phải là **Text Channel** (bot tự dùng kênh cha nếu bạn dán ID của một thread). |
 
 `OWNER_ID` và `GYM_CHANNEL_ID` nằm trong `cogs/core.py`.
+
+> Nếu `/battle_bage` báo *"Kênh trận … không dùng được"*, ID đó đang trỏ vào
+> kênh thoại / category / kênh bot không thấy. Dán lại ID **Text Channel** thật
+> (chuột phải kênh → Copy Channel ID) rồi restart.
 
 ## Quyền bot cần
 

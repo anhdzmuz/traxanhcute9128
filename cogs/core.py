@@ -220,6 +220,52 @@ def is_owner(user_id: int) -> bool:
     return user_id == OWNER_ID
 
 
+async def get_channel(client, channel_id):
+    """Lấy channel theo ID; trả None nếu bot không thấy hoặc ID sai."""
+    channel = client.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await client.fetch_channel(channel_id)
+        except discord.HTTPException:
+            return None
+    return channel
+
+
+def thread_parent(channel):
+    """Kênh dùng để tạo thread: thread → kênh cha; text/forum → chính nó."""
+    if isinstance(channel, discord.Thread):
+        return channel.parent
+    if isinstance(channel, (discord.TextChannel, discord.ForumChannel)):
+        return channel
+    return None
+
+
+async def resolve_thread_parent(client, channel_id):
+    """Tìm kênh có thể tạo thread và cho biết loại: ``text`` hoặc ``forum``.
+
+    Người dùng hay đặt MATCH_CHANNEL_ID thành một thread hoặc kênh thoại. Thread
+    thì dùng kênh cha; forum thì tạo bài đăng; còn lại báo lỗi kèm loại kênh thật
+    để dễ sửa cấu hình.
+    """
+    channel = await get_channel(client, channel_id)
+    parent = thread_parent(channel)
+    if parent is None and isinstance(channel, discord.Thread):
+        # Kênh cha chưa có trong cache — hỏi thẳng Discord.
+        parent = await get_channel(client, channel.parent_id)
+        if parent is not None and thread_parent(parent) is None:
+            parent = None
+    if parent is None:
+        actual = (
+            type(channel).__name__ if channel is not None else "không tìm thấy kênh"
+        )
+        raise RuntimeError(
+            f"Kênh trận {channel_id} không dùng được ({actual}). "
+            "Hãy đặt MATCH_CHANNEL_ID là Text Channel (hoặc Forum Channel)."
+        )
+    kind = "forum" if isinstance(parent, discord.ForumChannel) else "text"
+    return parent, kind
+
+
 def is_gym_channel():
     def predicate(interaction: discord.Interaction) -> bool:
         return interaction.channel_id == GYM_CHANNEL_ID
