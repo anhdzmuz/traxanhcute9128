@@ -1218,22 +1218,6 @@ class Badge(commands.Cog):
                 inline=False,
             )
 
-        next_position = len(rows) + 1
-        if next_position <= len(holders):
-            nxt = await _fetch_member(guild, holders[next_position - 1]) if guild else None
-            next_name = nxt.mention if nxt else f"<@{holders[next_position - 1]}>"
-            embed.add_field(
-                name="Cần thách đấu với",
-                value=next_name,
-                inline=False,
-            )
-        else:
-            embed.add_field(
-                name="Cần thách đấu với",
-                value="Đã lấy đủ huy hiệu mùa này 🎉",
-                inline=False,
-            )
-
         embed.set_footer(text="Dark Gym · Shadow Council")
         await interaction.followup.send(embed=embed, ephemeral=True)
 

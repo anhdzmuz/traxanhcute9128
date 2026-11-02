@@ -77,8 +77,7 @@ chạy lại. **Người thứ 5 có thể để trống.**
      người vừa thắng.
    - **❌ Hủy thách đấu** — đóng phòng, không tính huy hiệu, nhường slot.
 6. Bot khoá thread và thông báo kết quả trong kênh Gym.
-7. `/check_history_bage [member]` xem **"Đã lấy huy hiệu mùa này"** (ai, ngày giờ) và
-   **"Cần thách đấu với"** người kế tiếp.
+7. `/check_history_bage [member]` xem **"Đã lấy huy hiệu mùa này"** — ai và ngày giờ.
 8. `/reset_huy_hieu` (owner, xác nhận 2 lần) xoá **toàn bộ huy hiệu đã nhận của mọi
    người**, xoá hàng đợi và đóng các phòng đang mở. Danh sách người giữ vẫn giữ nguyên.
 
@@ -100,7 +99,7 @@ Người được chọn thì ưu tiên về 0.
 - `/lich_su [member]` — 10 trận gần nhất.
 - `/bang_xep_hang` — top thắng nhiều và top số lần làm Leader.
 - `/battle_bage` — đăng ký thách đấu lấy huy hiệu (như bấm nút trên panel).
-- `/check_history_bage [member]` — huy hiệu đã lấy mùa này + ngày giờ, và người cần thách đấu tiếp.
+- `/check_history_bage [member]` — huy hiệu đã lấy mùa này + ngày giờ nhận.
 
 ### Owner (ID trong `cogs/core.py`)
 - `/bat_dau` — chốt đăng ký và mở giải **ngay** (dùng để test, không cần chờ Thứ 2).
