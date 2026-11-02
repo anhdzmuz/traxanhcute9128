@@ -62,12 +62,12 @@ Tỷ số hợp lệ: BO1 `1-0 / 0-1`, BO3 `2-0 / 2-1 / 0-2 / 1-2`.
 
 ## Huy hiệu (badge)
 
-Owner đặt danh sách bằng `/dat_council @1 @2 @3 @4 [@5]` — một lần, đổi người thì
-chạy lại. 4 người đầu là **Shadow Council**, người thứ 5 (tuỳ chọn) là **Gym Leader**;
-để trống thì mặc định là owner.
+Owner đặt danh sách bằng `/dat_council @1 … @10` — một lần, đổi người thì chạy lại.
+Tất cả người được chọn là **Shadow Council** (tối đa 10, ô trống thì bỏ qua).
+Gym Leader là owner (**@hganh9128**).
 
 1. Member bấm nút trên panel (`/panel_huy_hieu`) hoặc dùng `/battle_bage`.
-2. Bot mở **1 private thread** gồm người thách đấu + **4 Shadow Council** + owner.
+2. Bot mở **1 private thread** gồm người thách đấu + **Shadow Council** + owner.
    Bot **không** can thiệp vào trận — người thách đấu tự vào game đánh với council.
 3. Phòng gửi kèm thông báo **chuyển stardust cho owner (@hganh9128)**, mặc định 50,
    sửa bằng `/dat_stardust so_tien:… [nguoi_nhan:@X] [noi_dung:…]`.
@@ -111,7 +111,7 @@ Người được chọn thì ưu tiên về 0.
 - `/tao_dang_ky` — đăng lại tin đăng ký ngay (tự mở lại đăng ký nếu đang đóng).
 - `/kiem_tra_quyen` — xem quyền **thực tế** bot đang có trong kênh Gym và kênh trận, kèm các channel override đang chặn.
 - `/reset` — **xóa toàn bộ dữ liệu bot**, xác nhận 2 lần. Sau khi reset, panel **WL1** tự mở trong ~2 phút.
-- `/dat_council @1 @2 @3 @4 [@5]` — đặt 4 Shadow Council và Gym Leader (người thứ 5 có thể để trống).
+- `/dat_council @1 … @10` — đặt danh sách Shadow Council (tối đa 10, ô trống thì bỏ qua).
 - `/trao_huy_hieu member:@X` — trao huy hiệu sau khi member thắng Gym Leader.
 - `/panel_huy_hieu` — đăng panel đăng ký đánh lấy huy hiệu.
 - `/reset_huy_hieu` — xoá toàn bộ huy hiệu đã nhận của mọi người (xác nhận 2 lần).

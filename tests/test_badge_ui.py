@@ -78,14 +78,12 @@ def test_room_embed_mentions_council_and_stardust():
     assert "thắng gym leader mới có huy hiệu" in embed.description.lower()
 
 
-def test_council_and_leader_ids():
+def test_council_ids_returns_every_configured_member():
     holders = [101, 102, 103, 104]
     assert badge._council_ids(holders) == [101, 102, 103, 104]
-    assert badge._leader_id(holders) == badge.OWNER_ID
 
-    with_leader = [101, 102, 103, 104, 105]
-    assert badge._council_ids(with_leader) == [101, 102, 103, 104]
-    assert badge._leader_id(with_leader) == 105
+    five = [101, 102, 103, 104, 105]
+    assert badge._council_ids(five) == [101, 102, 103, 104, 105]
 
 
 def test_stardust_text_default_and_custom():
@@ -151,17 +149,19 @@ def test_commands_are_registered_with_expected_names():
     ]
 
 
-def test_dat_council_last_holder_is_optional():
+def test_dat_council_accepts_up_to_ten_members():
     command = next(
         cmd for cmd in badge.Badge.__cog_app_commands__ if cmd.name == "dat_council"
     )
     params = [p.name for p in command.parameters]
-    assert params == ["nguoi_1", "nguoi_2", "nguoi_3", "nguoi_4", "nguoi_5"]
+    assert params == [f"nguoi_{index}" for index in range(1, 11)]
     for param in command.parameters:
         assert param.type is discord.AppCommandOptionType.user
-    assert command.parameters[-1].required is False
-    for param in command.parameters[:-1]:
+    # 4 ô đầu bắt buộc, các ô 5-10 có thể để trống.
+    for param in command.parameters[:4]:
         assert param.required is True
+    for param in command.parameters[4:]:
+        assert param.required is False
 
 
 def test_table_init_short_circuits_when_ready():

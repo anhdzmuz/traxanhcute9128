@@ -1,9 +1,9 @@
 """Tính năng đánh lấy huy hiệu (badge) của Dark Gym.
 
 Luồng hoạt động:
-- Owner chạy ``/dat_council`` mention 4 Shadow Council (và Gym Leader nếu muốn).
+- Owner chạy ``/dat_council`` mention danh sách Shadow Council (tối đa 10 người).
 - Member bấm nút trên panel (``/panel_huy_hieu``) hoặc dùng ``/battle_bage``.
-- Bot mở **1 phòng** (private thread) gồm người thách đấu + 4 Shadow Council + owner.
+- Bot mở **1 phòng** (private thread) gồm người thách đấu + Shadow Council + owner.
   Bot **không** can thiệp vào trận: người thách đấu tự vào game đánh với council.
 - Phòng gửi kèm thông báo yêu cầu chuyển stardust (sửa bằng ``/dat_stardust``).
 - 3 nút trong phòng:
@@ -164,13 +164,8 @@ def _set_holders_sync(guild_id, holder_ids):
 
 
 def _council_ids(holders):
-    """4 Shadow Council = 4 người đầu trong danh sách."""
-    return holders[:4]
-
-
-def _leader_id(holders):
-    """Gym Leader = người thứ 5 nếu có, ngược lại là owner."""
-    return holders[4] if len(holders) > 4 else OWNER_ID
+    """Toàn bộ Shadow Council đã đặt (tối đa 10 người)."""
+    return list(holders)
 
 
 def _stardust_target(stored):
@@ -514,7 +509,7 @@ def _room_embed(challenger, council, stardust_text):
             f"{challenger.mention} thách đấu: {names}\n\n"
             f"{stardust_text}\n\n"
             "**Cách làm:**\n"
-            "1️⃣ Tự vào game thách đấu lần lượt 4 Shadow Council.\n"
+            "1️⃣ Tự vào game thách đấu lần lượt các Shadow Council.\n"
             "2️⃣ Thắng council xong, bấm **✅ Đã thách đấu council xong**.\n"
             "3️⃣ Council hoặc Gym Leader bấm **✔️ Xác nhận** để mở phòng Gym Leader.\n\n"
             "Chỉ người thắng council mới được đánh Gym Leader, và "
@@ -617,7 +612,7 @@ async def _fetch_member(guild, user_id):
 async def open_room(client, guild, room_id, user_id, holders):
     """Tạo private thread cho một phòng đã ghi trong DB. Trả về thread.
 
-    Phòng gồm: người thách đấu + 4 Shadow Council + Gym Leader/owner.
+    Phòng gồm: người thách đấu + Shadow Council + Gym Leader/owner.
     Bot chỉ tạo phòng, không can thiệp vào các trận.
     """
     parent = await get_channel(client, MATCH_CHANNEL_ID)
@@ -644,10 +639,9 @@ async def open_room(client, guild, room_id, user_id, holders):
     )
 
     invited = [challenger, *council]
-    for extra_id in (_leader_id(holders), OWNER_ID):
-        extra = await _fetch_member(guild, extra_id)
-        if extra is not None and extra not in invited:
-            invited.append(extra)
+    owner = await _fetch_member(guild, OWNER_ID)
+    if owner is not None and owner not in invited:
+        invited.append(owner)
 
     for member in invited:
         try:
@@ -762,7 +756,7 @@ async def handle_join(interaction: discord.Interaction):
         )
 
     await interaction.followup.send(
-        f"Đã mở phòng cho bạn: {thread.mention} — tự vào game thách đấu 4 Shadow Council.",
+        f"Đã mở phòng cho bạn: {thread.mention} — tự vào game thách đấu các Shadow Council.",
         ephemeral=True,
     )
 
@@ -1103,14 +1097,19 @@ class Badge(commands.Cog):
 
     @app_commands.command(
         name="dat_council",
-        description="[OWNER] Đặt 4 Shadow Council và Gym Leader (nếu có).",
+        description="[OWNER] Đặt danh sách Shadow Council (tối đa 10 người).",
     )
     @app_commands.describe(
         nguoi_1="Shadow Council thứ 1",
         nguoi_2="Shadow Council thứ 2",
         nguoi_3="Shadow Council thứ 3",
         nguoi_4="Shadow Council thứ 4",
-        nguoi_5="Gym Leader — có thể để trống (mặc định là bạn)",
+        nguoi_5="Shadow Council thứ 5 (có thể để trống)",
+        nguoi_6="Shadow Council thứ 6 (có thể để trống)",
+        nguoi_7="Shadow Council thứ 7 (có thể để trống)",
+        nguoi_8="Shadow Council thứ 8 (có thể để trống)",
+        nguoi_9="Shadow Council thứ 9 (có thể để trống)",
+        nguoi_10="Shadow Council thứ 10 (có thể để trống)",
     )
     async def dat_council(
         self,
@@ -1120,12 +1119,32 @@ class Badge(commands.Cog):
         nguoi_3: discord.Member,
         nguoi_4: discord.Member,
         nguoi_5: discord.Member | None = None,
+        nguoi_6: discord.Member | None = None,
+        nguoi_7: discord.Member | None = None,
+        nguoi_8: discord.Member | None = None,
+        nguoi_9: discord.Member | None = None,
+        nguoi_10: discord.Member | None = None,
     ):
         if not is_owner(interaction.user.id):
             return await interaction.response.send_message(
                 "Chỉ người quản lý Gym mới dùng được lệnh này.", ephemeral=True
             )
-        members = [m for m in (nguoi_1, nguoi_2, nguoi_3, nguoi_4, nguoi_5) if m]
+        members = [
+            m
+            for m in (
+                nguoi_1,
+                nguoi_2,
+                nguoi_3,
+                nguoi_4,
+                nguoi_5,
+                nguoi_6,
+                nguoi_7,
+                nguoi_8,
+                nguoi_9,
+                nguoi_10,
+            )
+            if m
+        ]
         if len({m.id for m in members}) != len(members):
             return await interaction.response.send_message(
                 "Những người được chọn phải khác nhau.", ephemeral=True
@@ -1140,10 +1159,10 @@ class Badge(commands.Cog):
             _set_holders_sync, interaction.guild_id, [m.id for m in members]
         )
         lines = "\n".join(f"• {m.mention}" for m in members)
-        if len(members) < 5:
-            lines += f"\n• Gym Leader: <@{OWNER_ID}> (mặc định)"
         await interaction.followup.send(
-            f"Đã đặt Shadow Council:\n{lines}", ephemeral=True
+            f"Đã đặt **{len(members)} Shadow Council**:\n{lines}\n\n"
+            f"Gym Leader: <@{OWNER_ID}>",
+            ephemeral=True,
         )
 
     @app_commands.command(
@@ -1260,7 +1279,7 @@ class Badge(commands.Cog):
             title="🏅 THÁCH ĐẤU LẤY HUY HIỆU",
             color=COLOR,
             description=(
-                "Thách đấu lần lượt **4 Shadow Council**:\n"
+                "Thách đấu lần lượt **các Shadow Council**:\n"
                 + "\n".join(lines)
                 + f"\n\n{stardust}\n\n"
                 + "**Cách làm:** bấm nút bên dưới hoặc dùng `/battle_bage`.\n"
