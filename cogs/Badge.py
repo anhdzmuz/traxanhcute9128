@@ -714,7 +714,7 @@ async def handle_join(interaction: discord.Interaction):
 
 
 async def _promote_next(client, guild, payload):
-    """Mở phòng cho người đầu hàng đợi (nếu có)."""
+    """Mở phòng kế tiếp (người vừa thắng leo tiếp, hoặc người đầu hàng đợi)."""
     if not payload or not payload.get("next_room"):
         return None
     holders = await asyncio.to_thread(_get_holders_sync, guild.id)
