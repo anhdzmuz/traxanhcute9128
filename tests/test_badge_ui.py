@@ -50,15 +50,26 @@ def test_join_view_is_persistent():
     assert view.timeout is None
 
 
-def test_room_embed_shows_badge_position():
+def test_room_embed_uses_holder_name():
     challenger = FakeMember(2001, "ThachDau")
     holder = FakeMember(101, "Shady")
-    embed = badge._room_embed(3, 5, challenger, holder)
-    assert "TRẬN HUY HIỆU 3" in embed.title
+    embed = badge._room_embed(challenger, holder)
+    assert "Shady" in embed.title
     assert challenger.mention in embed.description
     assert holder.mention in embed.description
-    assert "3/5" in embed.description
-    assert "3/5" in embed.footer.text
+    assert "Huy hiệu 1" not in embed.description
+    assert "Huy hiệu 1" not in (embed.footer.text or "")
+
+
+def test_reset_view_custom_ids():
+    step1 = badge._reset_view(1)
+    assert [c.custom_id for c in step1.children] == ["badge:reset:1"]
+
+    step2 = badge._reset_view(2)
+    assert [c.custom_id for c in step2.children] == [
+        "badge:reset:2",
+        "badge:reset:cancel",
+    ]
 
 
 def test_can_judge_allows_council_owner_and_admin():
@@ -87,10 +98,11 @@ def test_commands_are_registered_with_expected_names():
         "check_history_bage",
         "dat_council",
         "panel_huy_hieu",
+        "reset_huy_hieu",
     ]
 
 
-def test_dat_council_takes_five_members():
+def test_dat_council_last_holder_is_optional():
     command = next(
         cmd for cmd in badge.Badge.__cog_app_commands__ if cmd.name == "dat_council"
     )
@@ -98,6 +110,9 @@ def test_dat_council_takes_five_members():
     assert params == ["nguoi_1", "nguoi_2", "nguoi_3", "nguoi_4", "nguoi_5"]
     for param in command.parameters:
         assert param.type is discord.AppCommandOptionType.user
+    assert command.parameters[-1].required is False
+    for param in command.parameters[:-1]:
+        assert param.required is True
 
 
 def test_table_init_short_circuits_when_ready():

@@ -62,16 +62,20 @@ Tỷ số hợp lệ: BO1 `1-0 / 0-1`, BO3 `2-0 / 2-1 / 0-2 / 1-2`.
 
 ## Huy hiệu (badge)
 
-Thứ tự từ thấp đến cao: **Huy hiệu 1 → 5** (5 người giữ, người cuối là Gym Leader).
-Owner đặt danh sách bằng `/dat_council @1 @2 @3 @4 @5` (một lần, đổi người thì chạy lại).
+Thứ tự từ thấp đến cao (không đánh số huy hiệu, gọi theo tên người giữ):
+Owner đặt danh sách bằng `/dat_council @1 @2 @3 @4 [@5]` — một lần, đổi người thì
+chạy lại. **Người thứ 5 có thể để trống.**
 
 1. Member bấm nút trên panel (`/panel_huy_hieu`) hoặc dùng `/battle_bage`.
-2. Bot mở **1 private thread** gồm người thách đấu + 5 người giữ huy hiệu + owner.
+2. Bot mở **1 private thread** gồm người thách đấu + những người giữ huy hiệu + owner.
 3. Tối đa **2 người xếp hàng chờ**; phòng trước đóng thì người đầu hàng được mở phòng.
 4. **Shadow Council / Admin** bấm **✅ Thắng** (trao huy hiệu + ghi log) hoặc
    **❌ Thua** (đóng phòng, không trao).
 5. Bot khoá thread, tag owner trong kênh Gym để đóng phòng và nhường slot.
-6. `/check_history_bage [member]` xem đã nhận huy hiệu nào, **ngày giờ** cụ thể.
+6. `/check_history_bage [member]` xem **"Đã lấy huy hiệu mùa này"** (ai, ngày giờ) và
+   **"Cần thách đấu với"** người kế tiếp.
+7. `/reset_huy_hieu` (owner, xác nhận 2 lần) xoá **toàn bộ huy hiệu đã nhận của mọi
+   người**, xoá hàng đợi và đóng các phòng đang mở. Danh sách người giữ vẫn giữ nguyên.
 
 Log lưu ở PostgreSQL (`badge_config`, `badge_rooms`, `badge_queue`, `badge_history`),
 không mất khi restart.
@@ -91,7 +95,7 @@ Người được chọn thì ưu tiên về 0.
 - `/lich_su [member]` — 10 trận gần nhất.
 - `/bang_xep_hang` — top thắng nhiều và top số lần làm Leader.
 - `/battle_bage` — đăng ký thách đấu lấy huy hiệu (như bấm nút trên panel).
-- `/check_history_bage [member]` — huy hiệu đã nhận + ngày giờ.
+- `/check_history_bage [member]` — huy hiệu đã lấy mùa này + ngày giờ, và người cần thách đấu tiếp.
 
 ### Owner (ID trong `cogs/core.py`)
 - `/bat_dau` — chốt đăng ký và mở giải **ngay** (dùng để test, không cần chờ Thứ 2).
@@ -101,8 +105,9 @@ Người được chọn thì ưu tiên về 0.
 - `/tao_dang_ky` — đăng lại tin đăng ký ngay (tự mở lại đăng ký nếu đang đóng).
 - `/kiem_tra_quyen` — xem quyền **thực tế** bot đang có trong kênh Gym và kênh trận, kèm các channel override đang chặn.
 - `/reset` — **xóa toàn bộ dữ liệu bot**, xác nhận 2 lần. Sau khi reset, panel **WL1** tự mở trong ~2 phút.
-- `/dat_council @1 @2 @3 @4 @5` — đặt 5 người giữ huy hiệu theo thứ tự thấp → cao.
+- `/dat_council @1 @2 @3 @4 [@5]` — đặt thứ tự người giữ huy hiệu từ thấp đến cao (người thứ 5 có thể để trống).
 - `/panel_huy_hieu` — đăng panel đăng ký đánh lấy huy hiệu.
+- `/reset_huy_hieu` — xoá toàn bộ huy hiệu đã nhận của mọi người (xác nhận 2 lần).
 
 ## Cấu hình
 
