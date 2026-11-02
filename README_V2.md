@@ -62,24 +62,25 @@ Tỷ số hợp lệ: BO1 `1-0 / 0-1`, BO3 `2-0 / 2-1 / 0-2 / 1-2`.
 
 ## Huy hiệu (badge)
 
-Thứ tự từ thấp đến cao (không đánh số huy hiệu, gọi theo tên người giữ):
 Owner đặt danh sách bằng `/dat_council @1 @2 @3 @4 [@5]` — một lần, đổi người thì
-chạy lại. **Người thứ 5 có thể để trống.**
+chạy lại. 4 người đầu là **Shadow Council**, người thứ 5 (tuỳ chọn) là **Gym Leader**;
+để trống thì mặc định là owner.
 
 1. Member bấm nút trên panel (`/panel_huy_hieu`) hoặc dùng `/battle_bage`.
-2. Bot mở **1 private thread** chỉ gồm người thách đấu + **đúng người giữ huy hiệu cần
-   đánh** (+ owner). Các trận còn lại member tự hẹn nhau.
-3. Phòng gửi kèm thông báo **chuyển stardust** cho Gym Leader (mặc định 50, sửa bằng
+2. Bot mở **1 private thread** gồm người thách đấu + **4 Shadow Council** + owner.
+   Bot **không** can thiệp vào trận — người thách đấu tự vào game đánh với council.
+3. Phòng gửi kèm thông báo **chuyển stardust** (mặc định 50, sửa bằng
    `/dat_stardust so_tien:… [nguoi_nhan:@X] [noi_dung:…]`).
 4. Tối đa **2 người xếp hàng chờ**; phòng trước đóng thì người đầu hàng được mở phòng.
-5. **Shadow Council / Admin** bấm:
-   - **✅ Đã đánh xong** — tính huy hiệu, ghi log và **mở phòng kế tiếp ngay** cho
-     người vừa thắng.
-   - **❌ Hủy thách đấu** — đóng phòng, không tính huy hiệu, nhường slot.
-6. Bot khoá thread và thông báo kết quả trong kênh Gym.
-7. `/check_history_bage [member]` xem **"Đã lấy huy hiệu mùa này"** — ai và ngày giờ.
+5. Trong phòng có 3 nút:
+   - **✅ Đã thách đấu council xong** — người thách đấu bấm khi đã đánh xong council.
+   - **✔️ Xác nhận** — council/owner bấm; bot chỉ **tag owner** để owner tự mở phòng
+     Gym Leader. Chỉ người thắng council mới được đánh Gym Leader.
+   - **❌ Hủy thách đấu** — đóng phòng, không tính, nhường slot.
+6. Thắng Gym Leader xong, owner chạy `/trao_huy_hieu @member` để ghi nhận huy hiệu.
+7. `/check_history_bage [member]` xem **"Đã lấy huy hiệu mùa này"** — ngày giờ nhận.
 8. `/reset_huy_hieu` (owner, xác nhận 2 lần) xoá **toàn bộ huy hiệu đã nhận của mọi
-   người**, xoá hàng đợi và đóng các phòng đang mở. Danh sách người giữ vẫn giữ nguyên.
+   người**, xoá hàng đợi và đóng các phòng đang mở. Danh sách council vẫn giữ nguyên.
 
 Log lưu ở PostgreSQL (`badge_config`, `badge_rooms`, `badge_queue`, `badge_history`),
 không mất khi restart.
@@ -109,7 +110,8 @@ Người được chọn thì ưu tiên về 0.
 - `/tao_dang_ky` — đăng lại tin đăng ký ngay (tự mở lại đăng ký nếu đang đóng).
 - `/kiem_tra_quyen` — xem quyền **thực tế** bot đang có trong kênh Gym và kênh trận, kèm các channel override đang chặn.
 - `/reset` — **xóa toàn bộ dữ liệu bot**, xác nhận 2 lần. Sau khi reset, panel **WL1** tự mở trong ~2 phút.
-- `/dat_council @1 @2 @3 @4 [@5]` — đặt thứ tự người giữ huy hiệu từ thấp đến cao (người thứ 5 có thể để trống).
+- `/dat_council @1 @2 @3 @4 [@5]` — đặt 4 Shadow Council và Gym Leader (người thứ 5 có thể để trống).
+- `/trao_huy_hieu member:@X` — trao huy hiệu sau khi member thắng Gym Leader.
 - `/panel_huy_hieu` — đăng panel đăng ký đánh lấy huy hiệu.
 - `/reset_huy_hieu` — xoá toàn bộ huy hiệu đã nhận của mọi người (xác nhận 2 lần).
 - `/dat_stardust [so_tien] [nguoi_nhan] [noi_dung]` — xem/sửa thông báo chuyển stardust (bỏ trống hết để xem).

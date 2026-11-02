@@ -38,12 +38,26 @@ HOLDERS = [101, 102, 103, 104, 105]
 def test_room_view_custom_ids_and_callbacks():
     view = badge._room_view(42)
     ids = [child.custom_id for child in view.children]
-    assert ids == ["badge:done:42", "badge:cancel:42"]
+    assert ids == ["badge:done:42", "badge:confirm:42", "badge:cancel:42"]
     # Callback rỗng để view trong bộ nhớ không báo "unknown callback";
     # xử lý thật nằm ở on_interaction.
     assert all(child.callback is not None for child in view.children)
     labels = [child.label for child in view.children]
-    assert labels == ["Đã đánh xong", "Hủy thách đấu"]
+    assert labels == ["Đã thách đấu council xong", "Xác nhận", "Hủy thách đấu"]
+
+
+def test_room_view_stage_locks_buttons():
+    opening = {c.custom_id: c.disabled for c in badge._room_view(42).children}
+    assert opening["badge:done:42"] is False
+    assert opening["badge:confirm:42"] is True
+    assert opening["badge:cancel:42"] is False
+
+    awaiting = {
+        c.custom_id: c.disabled for c in badge._room_view(42, "awaiting").children
+    }
+    assert awaiting["badge:done:42"] is True
+    assert awaiting["badge:confirm:42"] is False
+    assert awaiting["badge:cancel:42"] is False
 
 
 def test_join_view_is_persistent():
@@ -52,15 +66,26 @@ def test_join_view_is_persistent():
     assert view.timeout is None
 
 
-def test_room_embed_uses_holder_name_and_stardust():
+def test_room_embed_mentions_council_and_stardust():
     challenger = FakeMember(2001, "ThachDau")
-    holder = FakeMember(101, "Shady")
-    embed = badge._room_embed(challenger, holder, "chuyển **50 stardust** cho <@9>")
-    assert "Shady" in embed.title
+    council = [FakeMember(101, "Shady"), FakeMember(102, "ToKoPi")]
+    embed = badge._room_embed(challenger, council, "chuyển **50 stardust** cho <@9>")
+    assert "SHADOW COUNCIL" in embed.title
     assert challenger.mention in embed.description
-    assert holder.mention in embed.description
+    assert council[0].mention in embed.description
+    assert council[1].mention in embed.description
     assert "50 stardust" in embed.description
-    assert "Huy hiệu 1" not in embed.description
+    assert "thắng gym leader mới có huy hiệu" in embed.description.lower()
+
+
+def test_council_and_leader_ids():
+    holders = [101, 102, 103, 104]
+    assert badge._council_ids(holders) == [101, 102, 103, 104]
+    assert badge._leader_id(holders) == badge.OWNER_ID
+
+    with_leader = [101, 102, 103, 104, 105]
+    assert badge._council_ids(with_leader) == [101, 102, 103, 104]
+    assert badge._leader_id(with_leader) == 105
 
 
 def test_stardust_text_default_and_custom():
@@ -117,6 +142,7 @@ def test_commands_are_registered_with_expected_names():
         "dat_stardust",
         "panel_huy_hieu",
         "reset_huy_hieu",
+        "trao_huy_hieu",
     ]
 
 

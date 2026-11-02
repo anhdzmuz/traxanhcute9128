@@ -1,14 +1,17 @@
 """Tính năng đánh lấy huy hiệu (badge) của Dark Gym.
 
 Luồng hoạt động:
-- Owner chạy ``/dat_council`` mention tối đa 5 người giữ huy hiệu theo thứ tự từ thấp
-  đến cao (4 Shadow Council + Gym Leader, có thể bỏ trống người cuối).
+- Owner chạy ``/dat_council`` mention 4 Shadow Council (và Gym Leader nếu muốn).
 - Member bấm nút trên panel (``/panel_huy_hieu``) hoặc dùng ``/battle_bage``.
-- Bot mở **1 phòng** (private thread) chỉ gồm người thách đấu + đúng người giữ huy hiệu
-  cần đánh (+ owner), tối đa **2 người xếp hàng chờ**. Phòng gửi kèm thông báo yêu
-  cầu chuyển stardust (sửa bằng ``/dat_stardust``).
-- Shadow Council / Admin bấm ``✅ Đã đánh xong`` (tính huy hiệu + mở phòng kế tiếp ngay)
-  hoặc ``❌ Hủy thách đấu`` (đóng phòng, không tính).
+- Bot mở **1 phòng** (private thread) gồm người thách đấu + 4 Shadow Council + owner.
+  Bot **không** can thiệp vào trận: người thách đấu tự vào game đánh với council.
+- Phòng gửi kèm thông báo yêu cầu chuyển stardust (sửa bằng ``/dat_stardust``).
+- 3 nút trong phòng:
+  ``✅ Đã thách đấu council xong`` (người thách đấu bấm) →
+  ``✔️ Xác nhận`` (council/owner bấm) → bot chỉ tag owner để owner tự mở phòng
+  Gym Leader. ``❌ Hủy thách đấu`` đóng phòng, không tính.
+- Chỉ người thắng council mới được đánh Gym Leader. Thắng Gym Leader xong owner
+  chạy ``/trao_huy_hieu`` để ghi nhận huy hiệu.
 - ``/check_history_bage`` xem huy hiệu đã lấy và ngày giờ.
 - ``/reset_huy_hieu`` xoá toàn bộ huy hiệu đã nhận của mọi người.
 """
@@ -160,17 +163,49 @@ def _set_holders_sync(guild_id, holder_ids):
         )
 
 
-def _history_sync(guild_id, user_id):
+def _council_ids(holders):
+    """4 Shadow Council = 4 người đầu trong danh sách."""
+    return holders[:4]
+
+
+def _leader_id(holders):
+    """Gym Leader = người thứ 5 nếu có, ngược lại là owner."""
+    return holders[4] if len(holders) > 4 else OWNER_ID
+
+
+def _badge_sync(guild_id, user_id):
+    """Trả về thời điểm nhận huy hiệu mùa này, hoặc None nếu chưa có."""
     with get_pool().connection() as conn:
-        return conn.execute(
-            """
-            SELECT position, awarded_at
-            FROM badge_history
-            WHERE guild_id = %s AND user_id = %s
-            ORDER BY position
-            """,
+        row = conn.execute(
+            "SELECT awarded_at FROM badge_history "
+            "WHERE guild_id = %s AND user_id = %s "
+            "ORDER BY awarded_at DESC LIMIT 1",
             (guild_id, user_id),
-        ).fetchall()
+        ).fetchone()
+    return row[0] if row else None
+
+
+def _award_badge_sync(guild_id, user_id):
+    """Trao huy hiệu mùa này. Trả về 'ok' / 'holder' / 'already'."""
+    with get_pool().connection() as conn:
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (guild_id,))
+        row = conn.execute(
+            "SELECT holder_ids FROM badge_config WHERE guild_id = %s", (guild_id,)
+        ).fetchone()
+        holders = [int(x) for x in row[0]] if row else []
+        if int(user_id) in holders:
+            return "holder"
+        if conn.execute(
+            "SELECT 1 FROM badge_history WHERE guild_id = %s AND user_id = %s",
+            (guild_id, user_id),
+        ).fetchone():
+            return "already"
+        conn.execute(
+            "INSERT INTO badge_history (guild_id, user_id, position) "
+            "VALUES (%s, %s, 1)",
+            (guild_id, user_id),
+        )
+    return "ok"
 
 
 def _get_stardust_sync(guild_id):
@@ -202,7 +237,7 @@ def _set_stardust_sync(guild_id, amount=None, target=None, note=_UNSET):
         fields.append("stardust_note = %s")
         values.append(note)
     if not fields:
-        return _get_stardust_sync(guild_id) != (50, None, None)
+        return _get_stardust_sync(guild_id) != (DEFAULT_STARDUST, None, None)
     values.append(guild_id)
     with get_pool().connection() as conn:
         cursor = conn.execute(
@@ -237,17 +272,16 @@ def _join_sync(guild_id, user_id):
         if int(user_id) in holders:
             return "holder", {}
 
-        earned = conn.execute(
-            "SELECT COUNT(*) FROM badge_history WHERE guild_id = %s AND user_id = %s",
+        if conn.execute(
+            "SELECT 1 FROM badge_history WHERE guild_id = %s AND user_id = %s",
             (guild_id, user_id),
-        ).fetchone()[0]
-        position = int(earned) + 1
-        if position > len(holders):
-            return "done", {"total": len(holders)}
+        ).fetchone():
+            return "done", {}
 
         if conn.execute(
             "SELECT 1 FROM badge_rooms "
-            "WHERE guild_id = %s AND user_id = %s AND status = 'open'",
+            "WHERE guild_id = %s AND user_id = %s "
+            "AND status IN ('open', 'awaiting')",
             (guild_id, user_id),
         ).fetchone():
             return "in_room", {}
@@ -259,7 +293,8 @@ def _join_sync(guild_id, user_id):
             return "in_queue", {"position": _queue_index(conn, guild_id, user_id)}
 
         busy = conn.execute(
-            "SELECT 1 FROM badge_rooms WHERE guild_id = %s AND status = 'open' LIMIT 1",
+            "SELECT 1 FROM badge_rooms "
+            "WHERE guild_id = %s AND status IN ('open', 'awaiting') LIMIT 1",
             (guild_id,),
         ).fetchone()
         if busy:
@@ -273,26 +308,41 @@ def _join_sync(guild_id, user_id):
                 "ON CONFLICT DO NOTHING",
                 (guild_id, user_id),
             )
-            return "queued", {
-                "position": int(waiting) + 1,
-                "badge": position,
-                "holder": holders[position - 1],
-            }
+            return "queued", {"position": int(waiting) + 1}
 
         room_id = conn.execute(
             "INSERT INTO badge_rooms (guild_id, user_id, position) "
-            "VALUES (%s, %s, %s) RETURNING id",
-            (guild_id, user_id, position),
+            "VALUES (%s, %s, 1) RETURNING id",
+            (guild_id, user_id),
         ).fetchone()[0]
-        return "room", {
-            "room_id": int(room_id),
-            "position": position,
-            "holder": holders[position - 1],
-        }
+        return "room", {"room_id": int(room_id)}
 
 
-def _close_room_sync(room_id, won):
-    """Đóng phòng, ghi log nếu thắng, và mở phòng cho người kế tiếp trong hàng đợi."""
+def _room_info_sync(room_id):
+    """Thông tin cơ bản của phòng, hoặc None nếu không tồn tại."""
+    with get_pool().connection() as conn:
+        row = conn.execute(
+            "SELECT guild_id, user_id, thread_id, status "
+            "FROM badge_rooms WHERE id = %s",
+            (room_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "guild_id": int(row[0]),
+        "user_id": int(row[1]),
+        "thread_id": int(row[2]) if row[2] else None,
+        "status": row[3],
+    }
+
+
+def _room_action_sync(room_id, action):
+    """Chuyển trạng thái phòng theo nút bấm.
+
+    ``done``    : open     -> awaiting  (người thách đấu báo đã đánh xong council)
+    ``confirm`` : awaiting -> confirmed (council/owner xác nhận, nhường slot)
+    ``cancel``  : open/awaiting -> closed (huỷ, nhường slot)
+    """
     with get_pool().connection() as conn:
         first = conn.execute(
             "SELECT guild_id FROM badge_rooms WHERE id = %s", (room_id,)
@@ -303,104 +353,71 @@ def _close_room_sync(room_id, won):
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (guild_id,))
 
         row = conn.execute(
-            "SELECT guild_id, user_id, position, thread_id, status "
-            "FROM badge_rooms WHERE id = %s FOR UPDATE",
+            "SELECT user_id, thread_id, status FROM badge_rooms "
+            "WHERE id = %s FOR UPDATE",
             (room_id,),
         ).fetchone()
-        if not row or row[4] != "open":
+        if not row:
             return "gone", {}
+        user_id = int(row[0])
+        thread_id = int(row[1]) if row[1] else None
+        current = row[2]
 
-        guild_id, user_id, position, thread_id = (
-            int(row[0]),
-            int(row[1]),
-            int(row[2]),
-            row[3],
-        )
-
-        hrow = conn.execute(
-            "SELECT holder_ids FROM badge_config WHERE guild_id = %s", (guild_id,)
-        ).fetchone()
-        holders = [int(x) for x in hrow[0]] if hrow else []
-
-        def _holder_at(index):
-            return holders[index - 1] if 0 < index <= len(holders) else None
-
-        holder_id = _holder_at(position)
-
-        if won:
+        if action == "done":
+            if current != "open":
+                return "bad_state", {"status": current}
             conn.execute(
-                "INSERT INTO badge_history (guild_id, user_id, position) "
-                "VALUES (%s, %s, %s)",
-                (guild_id, user_id, position),
+                "UPDATE badge_rooms SET status = 'awaiting' WHERE id = %s", (room_id,)
             )
-        conn.execute("UPDATE badge_rooms SET status = 'closed' WHERE id = %s", (room_id,))
-
-        next_user = None
-        next_room = None
-        next_position = None
-        next_holder = None
-        advanced = False
-
-        # Thắng và còn người kế tiếp: mở phòng luôn cho chính người vừa thắng.
-        if won and _holder_at(position + 1) is not None:
-            next_user = user_id
-            next_position = position + 1
-            next_holder = _holder_at(next_position)
-            next_room = int(
+            new_status = "awaiting"
+            next_user = None
+            next_room = None
+        elif action in ("confirm", "cancel"):
+            if current not in ("open", "awaiting"):
+                return "bad_state", {"status": current}
+            new_status = "confirmed" if action == "confirm" else "closed"
+            conn.execute(
+                "UPDATE badge_rooms SET status = %s WHERE id = %s",
+                (new_status, room_id),
+            )
+            next_user = None
+            next_room = None
+            queue = conn.execute(
+                "SELECT user_id FROM badge_queue WHERE guild_id = %s ORDER BY created_at",
+                (guild_id,),
+            ).fetchall()
+            for row_q in queue:
+                candidate = int(row_q[0])
                 conn.execute(
-                    "INSERT INTO badge_rooms (guild_id, user_id, position) "
-                    "VALUES (%s, %s, %s) RETURNING id",
-                    (guild_id, next_user, next_position),
-                ).fetchone()[0]
-            )
-            advanced = True
-
-        queue = conn.execute(
-            "SELECT user_id FROM badge_queue WHERE guild_id = %s ORDER BY created_at",
-            (guild_id,),
-        ).fetchall()
-        for row_q in queue:
-            if advanced:
+                    "DELETE FROM badge_queue WHERE guild_id = %s AND user_id = %s",
+                    (guild_id, candidate),
+                )
+                if conn.execute(
+                    "SELECT 1 FROM badge_history "
+                    "WHERE guild_id = %s AND user_id = %s",
+                    (guild_id, candidate),
+                ).fetchone():
+                    # Người chờ đã có huy hiệu: bỏ qua.
+                    continue
+                next_user = candidate
+                next_room = int(
+                    conn.execute(
+                        "INSERT INTO badge_rooms (guild_id, user_id, position) "
+                        "VALUES (%s, %s, 1) RETURNING id",
+                        (guild_id, candidate),
+                    ).fetchone()[0]
+                )
                 break
-            candidate = int(row_q[0])
-            conn.execute(
-                "DELETE FROM badge_queue WHERE guild_id = %s AND user_id = %s",
-                (guild_id, candidate),
-            )
-            earned = conn.execute(
-                "SELECT COUNT(*) FROM badge_history "
-                "WHERE guild_id = %s AND user_id = %s",
-                (guild_id, candidate),
-            ).fetchone()[0]
-            candidate_position = int(earned) + 1
-            candidate_holder = _holder_at(candidate_position)
-            if candidate_holder is None:
-                # Người chờ đã lấy đủ huy hiệu (cấu hình vừa đổi): bỏ qua.
-                continue
-            next_user = candidate
-            next_position = candidate_position
-            next_holder = candidate_holder
-            next_room = int(
-                conn.execute(
-                    "INSERT INTO badge_rooms (guild_id, user_id, position) "
-                    "VALUES (%s, %s, %s) RETURNING id",
-                    (guild_id, next_user, next_position),
-                ).fetchone()[0]
-            )
-            break
+        else:
+            return "bad_action", {}
 
     return "ok", {
         "guild_id": guild_id,
         "user_id": user_id,
-        "position": position,
-        "holder_id": holder_id,
-        "thread_id": int(thread_id) if thread_id else None,
-        "won": bool(won),
+        "thread_id": thread_id,
+        "status": new_status,
         "next_user": next_user,
         "next_room": next_room,
-        "next_position": next_position,
-        "next_holder": next_holder,
-        "advanced": advanced,
     }
 
 
@@ -425,12 +442,13 @@ def _reset_badges_sync(guild_id):
         conn.execute("DELETE FROM badge_queue WHERE guild_id = %s", (guild_id,))
         threads = conn.execute(
             "SELECT thread_id FROM badge_rooms "
-            "WHERE guild_id = %s AND status = 'open' AND thread_id IS NOT NULL",
+            "WHERE guild_id = %s AND status IN ('open', 'awaiting') "
+            "AND thread_id IS NOT NULL",
             (guild_id,),
         ).fetchall()
         conn.execute(
             "UPDATE badge_rooms SET status = 'closed' "
-            "WHERE guild_id = %s AND status = 'open'",
+            "WHERE guild_id = %s AND status IN ('open', 'awaiting')",
             (guild_id,),
         )
     return int(removed or 0), [int(row[0]) for row in threads]
@@ -446,7 +464,7 @@ def _open_rooms_sync(guild_id):
             )
             for r in conn.execute(
                 "SELECT id, thread_id, created_at FROM badge_rooms "
-                "WHERE guild_id = %s AND status = 'open'",
+                "WHERE guild_id = %s AND status IN ('open', 'awaiting')",
                 (guild_id,),
             ).fetchall()
         ]
@@ -482,16 +500,20 @@ def _stardust_text(amount, target, note):
     return f"**Yêu cầu:** chuyển **{amount} stardust** cho Gym Leader trước khi đánh."
 
 
-def _room_embed(challenger, holder, stardust_text):
+def _room_embed(challenger, council, stardust_text):
+    names = ", ".join(member.mention for member in council) or "Shadow Council"
     embed = discord.Embed(
-        title=f"🏅 THÁCH ĐẤU · {holder.display_name}",
+        title="🏅 THÁCH ĐẤU SHADOW COUNCIL",
         color=COLOR,
         description=(
-            f"{challenger.mention} thách đấu {holder.mention} để lấy huy hiệu.\n\n"
+            f"{challenger.mention} thách đấu: {names}\n\n"
             f"{stardust_text}\n\n"
-            "Đánh xong, **Shadow Council** hoặc **Admin** bấm bên dưới:\n"
-            "`✅ Đã đánh xong` = tính huy hiệu và mở phòng kế tiếp · "
-            "`❌ Hủy thách đấu` = đóng phòng, không tính."
+            "**Cách làm:**\n"
+            "1️⃣ Tự vào game thách đấu lần lượt 4 Shadow Council.\n"
+            "2️⃣ Thắng council xong, bấm **✅ Đã thách đấu council xong**.\n"
+            "3️⃣ Council hoặc Gym Leader bấm **✔️ Xác nhận** để mở phòng Gym Leader.\n\n"
+            "Chỉ người thắng council mới được đánh Gym Leader, và "
+            "**thắng Gym Leader mới có huy hiệu**."
         ),
     )
     embed.set_footer(text="Dark Gym · Shadow Council")
@@ -527,20 +549,43 @@ def _reset_view(step):
     return view
 
 
-def _room_view(room_id):
+def _room_view(room_id, stage="open"):
     """Nút trong phòng. Callback rỗng: xử lý thật nằm ở `on_interaction` để nút
     vẫn hoạt động sau khi bot restart (view không còn trong bộ nhớ).
+
+    ``stage="open"``    : đã đánh xong council (bấm được) + xác nhận (khoá) + huỷ.
+    ``stage="awaiting"``: đã đánh xong (khoá) + xác nhận (bấm được) + huỷ.
     """
     view = discord.ui.View(timeout=None)
-    for action, label, emoji, style in (
-        ("done", "Đã đánh xong", "✅", discord.ButtonStyle.success),
-        ("cancel", "Hủy thách đấu", "❌", discord.ButtonStyle.danger),
+    for action, label, emoji, style, enabled in (
+        (
+            "done",
+            "Đã thách đấu council xong",
+            "✅",
+            discord.ButtonStyle.primary,
+            stage == "open",
+        ),
+        (
+            "confirm",
+            "Xác nhận",
+            "✔️",
+            discord.ButtonStyle.success,
+            stage == "awaiting",
+        ),
+        (
+            "cancel",
+            "Hủy thách đấu",
+            "❌",
+            discord.ButtonStyle.danger,
+            True,
+        ),
     ):
         button = discord.ui.Button(
             label=label,
             emoji=emoji,
             style=style,
             custom_id=f"badge:{action}:{room_id}",
+            disabled=not enabled,
         )
         # `Button.__init__` không nhận callback; gán trực tiếp để tránh lỗi
         # "unknown callback" khi view còn trong bộ nhớ.
@@ -564,34 +609,40 @@ async def _fetch_member(guild, user_id):
     return member
 
 
-async def open_room(client, guild, room_id, user_id, position, holders):
-    """Tạo private thread cho một phòng đã ghi trong DB. Trả về thread."""
+async def open_room(client, guild, room_id, user_id, holders):
+    """Tạo private thread cho một phòng đã ghi trong DB. Trả về thread.
+
+    Phòng gồm: người thách đấu + 4 Shadow Council + Gym Leader/owner.
+    Bot chỉ tạo phòng, không can thiệp vào các trận.
+    """
     parent = await get_channel(client, MATCH_CHANNEL_ID)
     if not isinstance(parent, discord.TextChannel):
         raise RuntimeError(f"Kênh trận {MATCH_CHANNEL_ID} không phải text channel.")
-    if position > len(holders):
-        raise RuntimeError("Cấu hình huy hiệu đã thay đổi, hãy chạy /dat_council lại.")
 
     challenger = await _fetch_member(guild, user_id)
     if challenger is None:
         raise RuntimeError(f"Không tìm thấy member {user_id} trong server.")
 
-    holder_id = holders[position - 1]
-    holder = await _fetch_member(guild, holder_id)
-    if holder is None:
-        raise RuntimeError(f"Không tìm thấy người giữ huy hiệu {holder_id} trong server.")
+    council = []
+    for holder_id in _council_ids(holders):
+        member = await _fetch_member(guild, holder_id)
+        if member is not None and member not in council:
+            council.append(member)
+    if not council:
+        raise RuntimeError("Chưa có Shadow Council, hãy chạy /dat_council lại.")
 
     thread = await parent.create_thread(
-        name=f"🏅 {challenger.display_name} vs {holder.display_name}"[:95],
+        name=f"🏅 {challenger.display_name} vs Shadow Council"[:95],
         type=discord.ChannelType.private_thread,
         invitable=False,
         auto_archive_duration=1440,
     )
 
-    invited = [challenger, holder]
-    owner = await _fetch_member(guild, OWNER_ID)
-    if owner is not None and owner not in invited:
-        invited.append(owner)
+    invited = [challenger, *council]
+    for extra_id in (_leader_id(holders), OWNER_ID):
+        extra = await _fetch_member(guild, extra_id)
+        if extra is not None and extra not in invited:
+            invited.append(extra)
 
     for member in invited:
         try:
@@ -602,12 +653,12 @@ async def open_room(client, guild, room_id, user_id, position, holders):
     await _set_thread_sync(room_id, thread.id)
 
     amount, target, note = await asyncio.to_thread(_get_stardust_sync, guild.id)
-    if target is None and holders:
-        target = holders[-1]
+    if target is None:
+        target = _leader_id(holders)
     stardust = _stardust_text(amount, target, note)
 
     mentions = " ".join(m.mention for m in invited)
-    embed = _room_embed(challenger, holder, stardust)
+    embed = _room_embed(challenger, council, stardust)
     await thread.send(content=mentions, embed=embed, view=_room_view(room_id))
     return thread
 
@@ -659,12 +710,11 @@ async def handle_join(interaction: discord.Interaction):
         )
     if status == "holder":
         return await interaction.followup.send(
-            "Bạn là người giữ huy hiệu nên không thể thách đấu.", ephemeral=True
+            "Bạn là Shadow Council / Gym Leader nên không thể thách đấu.", ephemeral=True
         )
     if status == "done":
         return await interaction.followup.send(
-            f"Bạn đã lấy đủ huy hiệu mùa này. Không còn gì để chinh phục!",
-            ephemeral=True,
+            "Bạn đã lấy huy hiệu mùa này rồi.", ephemeral=True
         )
     if status == "in_room":
         return await interaction.followup.send(
@@ -682,9 +732,8 @@ async def handle_join(interaction: discord.Interaction):
         )
     if status == "queued":
         return await interaction.followup.send(
-            f"Đã vào hàng đợi ở vị trí **{payload['position']}/{MAX_QUEUE}** "
-            f"(sẽ thách đấu <@{payload['holder']}>).\n"
-            "Khi trận hiện tại kết thúc, bot sẽ mở phòng cho bạn.",
+            f"Đã vào hàng đợi ở vị trí **{payload['position']}/{MAX_QUEUE}**.\n"
+            "Khi phòng hiện tại xong, bot sẽ mở phòng cho bạn.",
             ephemeral=True,
         )
 
@@ -692,13 +741,14 @@ async def handle_join(interaction: discord.Interaction):
     holders = await asyncio.to_thread(_get_holders_sync, guild.id)
     try:
         thread = await open_room(
-            interaction.client, guild, payload["room_id"], interaction.user.id,
-            payload["position"], holders,
+            interaction.client, guild, payload["room_id"], interaction.user.id, holders
         )
     except Exception as exc:  # noqa: BLE001 - dọn phòng để không kẹt slot
         log.exception("Không tạo được phòng huy hiệu")
         try:
-            result = await asyncio.to_thread(_close_room_sync, payload["room_id"], False)
+            result = await asyncio.to_thread(
+                _room_action_sync, payload["room_id"], "cancel"
+            )
             await _promote_next(interaction.client, guild, result[1])
         except Exception:
             log.exception("Không dọn được phòng huy hiệu lỗi")
@@ -708,25 +758,24 @@ async def handle_join(interaction: discord.Interaction):
         )
 
     await interaction.followup.send(
-        f"Đã mở phòng cho bạn: {thread.mention} — thách đấu <@{payload['holder']}>.",
+        f"Đã mở phòng cho bạn: {thread.mention} — tự vào game thách đấu 4 Shadow Council.",
         ephemeral=True,
     )
 
 
 async def _promote_next(client, guild, payload):
-    """Mở phòng kế tiếp (người vừa thắng leo tiếp, hoặc người đầu hàng đợi)."""
+    """Mở phòng cho người đầu hàng đợi (nếu có)."""
     if not payload or not payload.get("next_room"):
         return None
     holders = await asyncio.to_thread(_get_holders_sync, guild.id)
     try:
         return await open_room(
-            client, guild, payload["next_room"], payload["next_user"],
-            payload["next_position"], holders,
+            client, guild, payload["next_room"], payload["next_user"], holders
         )
     except Exception:  # noqa: BLE001
         log.exception("Không mở được phòng cho người kế tiếp")
         # Đóng phòng vừa tạo để nhường slot cho người sau trong hàng đợi.
-        result = await asyncio.to_thread(_close_room_sync, payload["next_room"], False)
+        result = await asyncio.to_thread(_room_action_sync, payload["next_room"], "cancel")
         if result[0] == "ok":
             await _promote_next(client, guild, result[1])
         return None
@@ -760,13 +809,22 @@ class Badge(commands.Cog):
             return
         custom_id = (interaction.data or {}).get("custom_id") or ""
         try:
-            if custom_id.startswith("badge:done:") or custom_id.startswith("badge:cancel:"):
-                _, action, raw_id = custom_id.split(":")
-                return await self._on_result(interaction, int(raw_id), action == "done")
+            if custom_id.startswith("badge:done:"):
+                _, _, raw_id = custom_id.split(":")
+                return await self._on_room_action(interaction, int(raw_id), "done")
+            if custom_id.startswith("badge:confirm:"):
+                _, _, raw_id = custom_id.split(":")
+                return await self._on_room_action(interaction, int(raw_id), "confirm")
+            if custom_id.startswith("badge:cancel:"):
+                _, _, raw_id = custom_id.split(":")
+                return await self._on_room_action(interaction, int(raw_id), "cancel")
             # Tương thích nút của phòng tạo trước khi đổi tên.
-            if custom_id.startswith("badge:win:") or custom_id.startswith("badge:lose:"):
-                _, action, raw_id = custom_id.split(":")
-                return await self._on_result(interaction, int(raw_id), action == "win")
+            if custom_id.startswith("badge:win:"):
+                _, _, raw_id = custom_id.split(":")
+                return await self._on_room_action(interaction, int(raw_id), "confirm")
+            if custom_id.startswith("badge:lose:"):
+                _, _, raw_id = custom_id.split(":")
+                return await self._on_room_action(interaction, int(raw_id), "cancel")
             if custom_id == "badge:reset:1":
                 return await self._on_reset(interaction, 1)
             if custom_id == "badge:reset:2":
@@ -785,16 +843,42 @@ class Badge(commands.Cog):
             else:
                 await interaction.response.send_message(text, ephemeral=True)
 
-    async def _on_result(self, interaction, room_id, won):
+    async def _on_room_action(self, interaction, room_id, action):
+        """Xử lý 3 nút trong phòng huy hiệu.
+
+        - ``done``    : chỉ người thách đấu bấm (đã đánh xong council).
+        - ``confirm`` : council/owner xác nhận, bot chỉ tag owner mở phòng Leader.
+        - ``cancel``  : người thách đấu hoặc council/owner huỷ phòng.
+        """
         guild = interaction.guild
         if guild is None:
             return await interaction.response.send_message(
                 "Chỉ dùng được trong server.", ephemeral=True
             )
-        holders = await asyncio.to_thread(_get_holders_sync, guild.id)
-        if not can_judge(interaction.user, holders):
+
+        info = await asyncio.to_thread(_room_info_sync, room_id)
+        if info is None:
             return await interaction.response.send_message(
-                "Chỉ **Shadow Council** hoặc **Admin** được bấm kết quả.", ephemeral=True
+                "Phòng này không còn tồn tại.", ephemeral=True
+            )
+
+        holders = await asyncio.to_thread(_get_holders_sync, guild.id)
+        is_challenger = interaction.user.id == info["user_id"]
+        is_judge = can_judge(interaction.user, holders)
+
+        if action == "done" and not is_challenger:
+            return await interaction.response.send_message(
+                "Chỉ người thách đấu mới bấm được nút này.", ephemeral=True
+            )
+        if action == "confirm" and not is_judge:
+            return await interaction.response.send_message(
+                "Chỉ **Shadow Council** hoặc **Gym Leader** được xác nhận.",
+                ephemeral=True,
+            )
+        if action == "cancel" and not (is_challenger or is_judge):
+            return await interaction.response.send_message(
+                "Chỉ người thách đấu, council hoặc Gym Leader được hủy.",
+                ephemeral=True,
             )
 
         await interaction.response.defer(ephemeral=True)
@@ -803,20 +887,59 @@ class Badge(commands.Cog):
                 "Hệ thống huy hiệu đang kết nối lại database, thử lại sau ít phút.",
                 ephemeral=True,
             )
-        status, payload = await asyncio.to_thread(_close_room_sync, room_id, won)
-        if status != "ok":
+
+        status, payload = await asyncio.to_thread(_room_action_sync, room_id, action)
+        if status == "gone":
             return await interaction.followup.send(
                 "Phòng này đã được xử lý rồi.", ephemeral=True
             )
+        if status == "bad_state":
+            if action == "done":
+                return await interaction.followup.send(
+                    "Phòng này đã được xác nhận hoặc đã hủy rồi.", ephemeral=True
+                )
+            return await interaction.followup.send(
+                "Người thách đấu chưa bấm **Đã thách đấu council xong**.",
+                ephemeral=True,
+            )
 
-        # Đóng phòng: khoá + lưu trữ thread để owner xoá khi rảnh, slot đã được
-        # giải phóng ngay trong database nên người kế tiếp không phải chờ.
-        thread = await get_channel(self.bot, payload["thread_id"]) if payload.get("thread_id") else None
+        thread = (
+            await get_channel(self.bot, payload["thread_id"])
+            if payload.get("thread_id")
+            else None
+        )
+        channel = await get_channel(self.bot, GYM_CHANNEL_ID)
+
+        if action == "done":
+            if isinstance(thread, discord.Thread):
+                try:
+                    await thread.send(
+                        f"⏳ <@{payload['user_id']}> đã đánh xong council.\n"
+                        f"<@{OWNER_ID}> hoặc council bấm **✔️ Xác nhận** để mở phòng "
+                        "Gym Leader.",
+                        allowed_mentions=discord.AllowedMentions(users=True),
+                    )
+                except discord.HTTPException:
+                    pass
+            try:
+                await interaction.message.edit(view=_room_view(room_id, "awaiting"))
+            except discord.HTTPException:
+                log.warning("Không cập nhật được nút phòng huy hiệu %s", room_id)
+            return await interaction.followup.send(
+                "Đã ghi nhận. Chờ council hoặc Gym Leader bấm **Xác nhận**.",
+                ephemeral=True,
+            )
+
+        # confirm / cancel: đóng phòng và nhường slot.
         if isinstance(thread, discord.Thread):
             try:
-                await thread.send(
-                    "🔒 Phòng đã có kết quả. Cảm ơn mọi người — phòng sẽ được đóng lại."
-                )
+                if action == "confirm":
+                    await thread.send(
+                        f"✅ Council đã xác nhận. <@{payload['user_id']}> được đánh "
+                        "Gym Leader.\nThắng Gym Leader mới được trao huy hiệu."
+                    )
+                else:
+                    await thread.send("❌ Đã hủy thách đấu huy hiệu.")
             except discord.HTTPException:
                 pass
             try:
@@ -824,51 +947,45 @@ class Badge(commands.Cog):
             except discord.HTTPException:
                 log.warning("Không khoá được phòng huy hiệu %s", payload.get("thread_id"))
 
-        # Thông báo trong kênh Gym + tag owner để đóng phòng, nhường slot.
-        channel = await get_channel(self.bot, GYM_CHANNEL_ID)
+        try:
+            await interaction.message.edit(view=None)
+        except discord.HTTPException:
+            pass
+
         if channel is not None:
-            holder = (
-                f"<@{payload['holder_id']}>"
-                if payload.get("holder_id")
-                else "đối thủ"
-            )
-            if payload["won"]:
+            if action == "confirm":
                 text = (
-                    f"🏅 <@{payload['user_id']}> đã vượt qua {holder} và lấy được huy hiệu!"
+                    f"🏅 <@{payload['user_id']}> đã vượt qua Shadow Council!\n"
+                    f"<@{OWNER_ID}> mở phòng Gym Leader cho <@{payload['user_id']}> nhé."
                 )
             else:
-                text = (
-                    f"❌ <@{payload['user_id']}> đã hủy thách đấu với {holder}."
-                )
+                text = f"❌ <@{payload['user_id']}> đã hủy thách đấu huy hiệu."
             try:
-                await channel.send(text, allowed_mentions=discord.AllowedMentions(users=True))
+                await channel.send(
+                    text, allowed_mentions=discord.AllowedMentions(users=True)
+                )
             except discord.HTTPException:
                 log.warning("Không gửi được thông báo kết quả huy hiệu")
 
         next_thread = await _promote_next(self.bot, guild, payload)
         if next_thread is not None and channel is not None:
-            if payload.get("advanced"):
-                text = (
-                    f"➡️ <@{payload['next_user']}> tiếp tục thách đấu "
-                    f"<@{payload['next_holder']}> {next_thread.mention}"
-                )
-            else:
-                text = (
-                    f"➡️ Phòng tiếp theo: <@{payload['next_user']}> vs "
-                    f"<@{payload['next_holder']}> {next_thread.mention}"
-                )
             try:
-                await channel.send(text, allowed_mentions=discord.AllowedMentions(users=True))
+                await channel.send(
+                    f"➡️ Phòng tiếp theo: <@{payload['next_user']}> vs Shadow Council "
+                    f"{next_thread.mention}",
+                    allowed_mentions=discord.AllowedMentions(users=True),
+                )
             except discord.HTTPException:
                 pass
 
-        if payload.get("won") and not payload.get("next_room"):
+        if action == "confirm":
             await interaction.followup.send(
-                "Đã tính huy hiệu cuối cùng — người này đã lấy đủ bộ huy hiệu mùa này!",
+                "Đã xác nhận. Bot đã tag Gym Leader để mở phòng — thắng Gym Leader "
+                "mới có huy hiệu.",
                 ephemeral=True,
             )
         else:
-            await interaction.followup.send("Đã ghi nhận kết quả.", ephemeral=True)
+            await interaction.followup.send("Đã hủy thách đấu.", ephemeral=True)
 
     # ------------------------------------------------------------------ #
     # Reset huy hiệu (xác nhận 2 lần)
@@ -929,7 +1046,7 @@ class Badge(commands.Cog):
                 description=(
                     f"Đã xóa **{removed}** huy hiệu đã nhận, xóa hàng đợi và đóng "
                     f"**{len(thread_ids)}** phòng đang mở.\n"
-                    "Mọi người bắt đầu lại từ người giữ huy hiệu đầu tiên."
+                    "Mọi người có thể đăng ký thách đấu lại từ đầu."
                 ),
                 color=COLOR,
             ),
@@ -956,7 +1073,9 @@ class Badge(commands.Cog):
                         log.warning(
                             "Phòng huy hiệu %s thiếu thread, đóng để nhường slot", room_id
                         )
-                        result = await asyncio.to_thread(_close_room_sync, room_id, False)
+                        result = await asyncio.to_thread(
+                            _room_action_sync, room_id, "cancel"
+                        )
                         if result[0] == "ok":
                             await _promote_next(self.bot, guild, result[1])
                         continue
@@ -964,7 +1083,7 @@ class Badge(commands.Cog):
                     if isinstance(thread, discord.Thread):
                         continue
                     log.warning("Phòng huy hiệu %s mất thread, đóng để nhường slot", room_id)
-                    result = await asyncio.to_thread(_close_room_sync, room_id, False)
+                    result = await asyncio.to_thread(_room_action_sync, room_id, "cancel")
                     if result[0] == "ok":
                         await _promote_next(self.bot, guild, result[1])
         except Exception:
@@ -980,14 +1099,14 @@ class Badge(commands.Cog):
 
     @app_commands.command(
         name="dat_council",
-        description="[OWNER] Đặt thứ tự người giữ huy hiệu từ thấp đến cao.",
+        description="[OWNER] Đặt 4 Shadow Council và Gym Leader (nếu có).",
     )
     @app_commands.describe(
-        nguoi_1="Người đầu tiên (thấp nhất)",
-        nguoi_2="Người thứ 2",
-        nguoi_3="Người thứ 3",
-        nguoi_4="Người thứ 4",
-        nguoi_5="Người cuối cùng (cao nhất, thường là Gym Leader) — có thể để trống",
+        nguoi_1="Shadow Council thứ 1",
+        nguoi_2="Shadow Council thứ 2",
+        nguoi_3="Shadow Council thứ 3",
+        nguoi_4="Shadow Council thứ 4",
+        nguoi_5="Gym Leader — có thể để trống (mặc định là bạn)",
     )
     async def dat_council(
         self,
@@ -1018,9 +1137,9 @@ class Badge(commands.Cog):
         )
         lines = "\n".join(f"• {m.mention}" for m in members)
         if len(members) < 5:
-            lines += "\n• (chưa đặt người cuối)"
+            lines += f"\n• Gym Leader: <@{OWNER_ID}> (mặc định)"
         await interaction.followup.send(
-            f"Đã đặt thứ tự thách đấu:\n{lines}", ephemeral=True
+            f"Đã đặt Shadow Council:\n{lines}", ephemeral=True
         )
 
     @app_commands.command(
@@ -1029,7 +1148,7 @@ class Badge(commands.Cog):
     )
     @app_commands.describe(
         so_tien="Số stardust yêu cầu (bỏ trống để xem cấu hình hiện tại)",
-        nguoi_nhan="Người nhận stardust (mặc định là người cuối trong /dat_council)",
+        nguoi_nhan="Người nhận stardust (mặc định là Gym Leader / owner)",
         noi_dung='Câu thông báo thay thế hoàn toàn (gõ "-" để xoá, bỏ trống để giữ nguyên)',
     )
     async def dat_stardust(
@@ -1066,7 +1185,7 @@ class Badge(commands.Cog):
                 holders = await asyncio.to_thread(
                     _get_holders_sync, interaction.guild_id
                 )
-                target = holders[-1] if holders else None
+                target = _leader_id(holders) if holders else None
             target_text = f"<@{target}>" if target else "(chưa đặt)"
             return await interaction.followup.send(
                 f"**Stardust hiện tại:** {amount}\n"
@@ -1092,7 +1211,7 @@ class Badge(commands.Cog):
         )
         if target is None:
             holders = await asyncio.to_thread(_get_holders_sync, interaction.guild_id)
-            target = holders[-1] if holders else None
+            target = _leader_id(holders) if holders else None
         await interaction.followup.send(
             "Đã cập nhật thông báo stardust:\n"
             + _stardust_text(amount, target, note_now),
@@ -1128,7 +1247,7 @@ class Badge(commands.Cog):
 
         guild = interaction.guild
         lines = []
-        for holder_id in holders:
+        for holder_id in _council_ids(holders):
             member = await _fetch_member(guild, holder_id) if guild else None
             name = member.mention if member else f"<@{holder_id}>"
             lines.append(f"• {name}")
@@ -1136,18 +1255,22 @@ class Badge(commands.Cog):
         amount, target, note = await asyncio.to_thread(
             _get_stardust_sync, interaction.guild_id
         )
-        if target is None and holders:
-            target = holders[-1]
+        if target is None:
+            target = _leader_id(holders)
         stardust = _stardust_text(amount, target, note)
 
         embed = discord.Embed(
             title="🏅 THÁCH ĐẤU LẤY HUY HIỆU",
             color=COLOR,
             description=(
-                "Lần lượt vượt qua từng người giữ huy hiệu để lấy đủ bộ huy hiệu mùa này.\n\n"
+                "Thách đấu lần lượt **4 Shadow Council**:\n"
                 + "\n".join(lines)
                 + f"\n\n{stardust}\n\n"
-                + "**Cách tham gia:** bấm nút bên dưới hoặc dùng `/battle_bage`.\n"
+                + "**Cách làm:** bấm nút bên dưới hoặc dùng `/battle_bage`.\n"
+                "Bot mở phòng riêng cho bạn với council — tự vào game đánh, "
+                "thắng council bấm **Đã thách đấu council xong**.\n"
+                "Council/Gym Leader xác nhận xong bạn mới được đánh Gym Leader, "
+                "và **thắng Gym Leader mới có huy hiệu**.\n"
                 f"Mỗi lúc chỉ mở **1 phòng**, tối đa **{MAX_QUEUE} người** xếp hàng chờ."
             ),
             timestamp=discord.utils.utcnow(),
@@ -1194,32 +1317,76 @@ class Badge(commands.Cog):
                 "Hệ thống huy hiệu đang kết nối lại database, thử lại sau ít phút.",
                 ephemeral=True,
             )
-        rows = await asyncio.to_thread(_history_sync, interaction.guild_id, target.id)
-        holders = await asyncio.to_thread(_get_holders_sync, interaction.guild_id)
-        guild = interaction.guild
+        awarded_at = await asyncio.to_thread(
+            _badge_sync, interaction.guild_id, target.id
+        )
 
         embed = discord.Embed(
             title=f"🏅 HUY HIỆU · {target.display_name}",
             color=COLOR,
-            description="Đã lấy huy hiệu mùa này",
         )
-
-        for position, awarded_at in rows:
-            name = "?"
-            if position <= len(holders):
-                holder = (
-                    await _fetch_member(guild, holders[position - 1]) if guild else None
-                )
-                name = holder.display_name if holder else f"<@{holders[position - 1]}>"
+        if awarded_at is None:
+            embed.description = "Chưa lấy huy hiệu mùa này."
+        else:
             stamp = int(awarded_at.timestamp())
-            embed.add_field(
-                name=name,
-                value=f"<t:{stamp}:F> (<t:{stamp}:R>)",
-                inline=False,
+            embed.description = (
+                "Đã lấy huy hiệu mùa này\n\n"
+                f"<t:{stamp}:F> (<t:{stamp}:R>)"
             )
 
         embed.set_footer(text="Dark Gym · Shadow Council")
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(
+        name="trao_huy_hieu",
+        description="[OWNER] Trao huy hiệu cho member vừa thắng Gym Leader.",
+    )
+    @app_commands.describe(member="Người vừa thắng Gym Leader")
+    async def trao_huy_hieu(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+    ):
+        if not is_owner(interaction.user.id):
+            return await interaction.response.send_message(
+                "Chỉ người quản lý Gym mới dùng được lệnh này.", ephemeral=True
+            )
+        if interaction.guild_id is None:
+            return await interaction.response.send_message(
+                "Chỉ dùng được trong server.", ephemeral=True
+            )
+        await interaction.response.defer(ephemeral=True)
+        if not await asyncio.to_thread(_ensure_tables):
+            return await interaction.followup.send(
+                "Hệ thống huy hiệu đang kết nối lại database, thử lại sau ít phút.",
+                ephemeral=True,
+            )
+
+        status = await asyncio.to_thread(
+            _award_badge_sync, interaction.guild_id, member.id
+        )
+        if status == "holder":
+            return await interaction.followup.send(
+                f"{member.mention} là Shadow Council / Gym Leader, không trao huy hiệu.",
+                ephemeral=True,
+            )
+        if status == "already":
+            return await interaction.followup.send(
+                f"{member.mention} đã có huy hiệu mùa này rồi.", ephemeral=True
+            )
+
+        channel = await get_channel(self.bot, GYM_CHANNEL_ID)
+        if channel is not None:
+            try:
+                await channel.send(
+                    f"🏅 {member.mention} đã thắng Gym Leader và nhận huy hiệu mùa này!",
+                    allowed_mentions=discord.AllowedMentions(users=True),
+                )
+            except discord.HTTPException:
+                pass
+        await interaction.followup.send(
+            f"Đã trao huy hiệu mùa này cho {member.mention}.", ephemeral=True
+        )
 
     @app_commands.command(
         name="reset_huy_hieu",
